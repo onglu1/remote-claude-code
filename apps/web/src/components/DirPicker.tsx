@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 
-function parentOf(p: string): string {
-  const i = p.lastIndexOf('/');
-  return i < 0 ? '' : p.slice(0, i);
-}
-
 /**
- * 逐级点选目录。从配置的浏览根开始，点子目录进入下一级，
- * 「选择此目录」把当前绝对路径回传。全程不用手输。
+ * 任意层级目录选择器:
+ *   - 默认起步 = 当前用户 home(后端按 req.user.unixUser 决定)
+ *   - "上级"按钮回到上一层(到 / 时禁用)
+ *   - "我的家"按钮跳回 home
+ *   - 任何能 readdir 的目录都可"选这里"作为项目根
+ *
+ * 多用户隔离设计 + UX 改造 2026-06-23:不再有 root/relPath 概念,全用绝对路径。
  */
 export function DirPicker({
   onPick,
@@ -17,8 +17,11 @@ export function DirPicker({
   onPick: (absolute: string, name: string) => void;
   onClose: () => void;
 }) {
+  // 空串 = 让后端定默认起步(用户 home)
   const [path, setPath] = useState('');
-  const [absolute, setAbsolute] = useState('');
+  const [current, setCurrent] = useState('');
+  const [home, setHome] = useState('');
+  const [parent, setParent] = useState<string | null>(null);
   const [dirs, setDirs] = useState<{ name: string; path: string }[]>([]);
   const [error, setError] = useState('');
 
@@ -26,14 +29,17 @@ export function DirPicker({
     api
       .listDirs(path)
       .then((r) => {
-        setAbsolute(r.absolute);
+        setCurrent(r.path);
+        setHome(r.home);
+        setParent(r.parent);
         setDirs(r.dirs);
         setError('');
       })
       .catch((e) => setError((e as Error).message));
   }, [path]);
 
-  const basename = absolute.split('/').filter(Boolean).pop() ?? '';
+  const basename = current.split('/').filter(Boolean).pop() ?? '';
+  const atHome = current === home;
 
   return (
     <div className="app">
@@ -43,19 +49,33 @@ export function DirPicker({
         </button>
         <div className="title">
           选择目录
-          <small>{absolute || '…'}</small>
+          <small>{current || '…'}</small>
         </div>
       </div>
       <div className="content">
-        <div className="crumb">
+        <div
+          className="crumb"
+          style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center' }}
+        >
           <button
             className="btn ghost sm"
-            disabled={path === ''}
-            onClick={() => setPath(parentOf(path))}
+            disabled={parent === null}
+            onClick={() => parent !== null && setPath(parent)}
+            title={parent === null ? '已在根目录' : `回到 ${parent}`}
           >
             ‹ 上级
           </button>
-          <span className="crumb-path">{absolute}</span>
+          <button
+            className="btn ghost sm"
+            disabled={atHome}
+            onClick={() => setPath(home)}
+            title={`回到家:${home}`}
+          >
+            🏠 我的家
+          </button>
+          <span className="crumb-path" style={{ marginLeft: 'auto', opacity: 0.7 }}>
+            {current}
+          </span>
         </div>
         {error && <div className="error">{error}</div>}
         <div className="list" style={{ gap: 'var(--sp-2)' }}>
@@ -82,10 +102,10 @@ export function DirPicker({
       >
         <button
           className="btn primary block"
-          disabled={!absolute}
-          onClick={() => onPick(absolute, basename)}
+          disabled={!current}
+          onClick={() => onPick(current, basename)}
         >
-          ✓ 选择此目录{basename ? `：${basename}` : ''}
+          ✓ 选择此目录{basename ? `:${basename}` : ''}
         </button>
       </div>
     </div>

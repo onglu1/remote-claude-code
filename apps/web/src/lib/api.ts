@@ -114,11 +114,19 @@ export const api = {
   }) => req<{ project: Project }>('POST', '/api/projects', p),
   deleteProject: (id: string) => req<{ ok: true }>('DELETE', `/api/projects/${id}`),
 
+  /**
+   * 目录浏览(任意层级):
+   * - path 空 → 后端返回当前用户 home 的列表
+   * - path 是绝对路径 → 列出该路径下的子目录
+   * - 返回 parent:上一层路径(已到根则 null);home:当前用户家(供"我的家"按钮跳转)
+   */
   listDirs: (path = '') =>
-    req<{ root: string; absolute: string; path: string; dirs: { name: string; path: string }[] }>(
-      'GET',
-      `/api/fs/dirs?path=${encodeURIComponent(path)}`,
-    ),
+    req<{
+      path: string;
+      home: string;
+      parent: string | null;
+      dirs: { name: string; path: string }[];
+    }>('GET', `/api/fs/dirs?path=${encodeURIComponent(path)}`),
 
   listConversations: (pid: string) =>
     req<{ conversations: Conversation[] }>('GET', `/api/projects/${pid}/conversations`),
