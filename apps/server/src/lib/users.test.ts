@@ -74,3 +74,18 @@ describe('UserStore', () => {
     expect(fs.existsSync(`${file}.bak`)).toBe(true);
   });
 });
+
+describe('UserStore settings', () => {
+  it('add 创建用户带默认 settings.idleCloseHours=3', () => {
+    const s = new UserStore(file);
+    const u = s.add({ username: 'alice', passwordHash: 'h', role: 'admin' });
+    expect(u.settings.idleCloseHours).toBe(3);
+  });
+
+  it('updateSettings 改 idleCloseHours', () => {
+    const s = new UserStore(file);
+    const u = s.add({ username: 'alice', passwordHash: 'h', role: 'admin' });
+    const updated = s.updateSettings(u.id, { idleCloseHours: 6 });
+    expect(updated?.settings.idleCloseHours).toBe(6);
+  });
+});

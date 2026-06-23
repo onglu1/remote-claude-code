@@ -18,6 +18,12 @@ export const UserSchema = z.object({
   passwordHash: z.string().min(1),
   role: RoleSchema,
   createdAt: z.string(),
+  /** 用户偏好。idleCloseHours: 空闲自动关闭阈值小时(0=关闭功能,默认 3)。 */
+  settings: z
+    .object({
+      idleCloseHours: z.number().int().min(0).max(48).default(3),
+    })
+    .default({ idleCloseHours: 3 }),
 });
 export type User = z.infer<typeof UserSchema>;
 
