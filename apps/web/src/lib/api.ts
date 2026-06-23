@@ -9,6 +9,7 @@ import type {
   Role,
   MetricsSnapshot,
   ScrollbackChunk,
+  Folder,
 } from '@rcc/shared';
 
 export interface FileContent {
@@ -159,6 +160,63 @@ export const api = {
     num: string,
     patch: { status?: TaskStatus; evidenceLinks?: string[]; tags?: string[] },
   ) => req<{ ok: true; task: TaskItem }>('PATCH', `/api/projects/${pid}/tasks/${num}`, patch),
+
+  // ---- 文件夹 CRUD(按项目+用户隔离,平铺一层) ----
+  listFolders: (pid: string) =>
+    req<{ folders: Folder[] }>('GET', `/api/projects/${pid}/folders`),
+  createFolder: (pid: string, name: string) =>
+    req<{ folder: Folder }>('POST', `/api/projects/${pid}/folders`, { name }),
+  renameFolder: (pid: string, fid: string, name: string) =>
+    req<{ folder: Folder }>('PATCH', `/api/projects/${pid}/folders/${fid}`, { name }),
+  removeFolder: (pid: string, fid: string) =>
+    req<{ reassigned: number }>('DELETE', `/api/projects/${pid}/folders/${fid}`),
+
+  // ---- 会话 patch / 休眠恢复 / 批量 ----
+  /** 通用 patch:支持 name / folderId(null=未分类) / starred。 */
+  patchConversation: (
+    pid: string,
+    cid: string,
+    patch: { name?: string; folderId?: string | null; starred?: boolean },
+  ) =>
+    req<{ conversation: Conversation }>(
+      'PATCH',
+      `/api/projects/${pid}/conversations/${cid}`,
+      patch,
+    ),
+  /** 手动关闭(写 closedAt + 杀 tmux);不进垃圾箱,仍可恢复。 */
+  closeConversation: (pid: string, cid: string) =>
+    req<{ conversation: Conversation }>(
+      'POST',
+      `/api/projects/${pid}/conversations/${cid}/close`,
+    ),
+  /** 从休眠恢复:重起 tmux + --resume + 清 closedAt。 */
+  resumeConversation: (pid: string, cid: string) =>
+    req<{ conversation: Conversation }>(
+      'POST',
+      `/api/projects/${pid}/conversations/${cid}/resume`,
+    ),
+  /**
+   * 批量动作:move/star/unstar/close/softDelete。
+   * 后端"尽力而为":单条失败不阻断,在 failed 数组里给原因(如 starred_locked)。
+   */
+  batchConversations: (
+    pid: string,
+    body: {
+      ids: string[];
+      action: 'move' | 'star' | 'unstar' | 'close' | 'softDelete';
+      payload?: { folderId?: string | null };
+    },
+  ) =>
+    req<{ succeeded: string[]; failed: { id: string; reason: string }[] }>(
+      'POST',
+      `/api/projects/${pid}/conversations/batch`,
+      body,
+    ),
+
+  // ---- 用户自身设置(目前只有 idleCloseHours) ----
+  getSettings: () => req<{ idleCloseHours: number }>('GET', '/api/me/settings'),
+  updateSettings: (s: { idleCloseHours: number }) =>
+    req<{ idleCloseHours: number }>('PATCH', '/api/me/settings', s),
 };
 
 export { ApiError };
