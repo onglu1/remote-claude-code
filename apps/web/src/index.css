@@ -1944,3 +1944,16 @@ select.input {
 }
 .settings-header h3 { font-size: 18px; margin: 0; }
 .settings-body { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+/* ---- 拖拽(@dnd-kit/core) ---- */
+.sidebar-group.drop-over { background: var(--accent-soft); border-radius: var(--radius); }
+.sidebar-drag-wrap { display: flex; align-items: stretch; gap: 4px; touch-action: pan-y; }
+.sidebar-drag-handle {
+  width: 6px; align-self: stretch;
+  background: var(--line);
+  border-radius: 3px;
+  cursor: grab; flex: none;
+  margin: 4px 0;
+}
+.sidebar-drag-handle:active { cursor: grabbing; background: var(--accent); }
+.sidebar-drag-body { flex: 1; min-width: 0; }

@@ -1,4 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
+import {
+  DndContext,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
 import type { Conversation, Folder } from '@rcc/shared';
 import { api } from '../lib/api';
 import { SessionContextMenu } from './SessionContextMenu';
@@ -36,19 +45,37 @@ export function groupConversationsByFolder(
 }
 
 /**
- * 侧栏文件夹树:把会话按 folderId 分组、文件夹标题可折叠;每条会话展示三态点。
- *
- * 三态点语义:
- *   - 绿(alive=true, closedAt 空)     运行中
- *   - 灰(closedAt 存在)               休眠中(IdleSweeper 或手动 close 已 kill tmux)
- *   - 红(alive=false, closedAt 空)    僵死/未拉起(罕见,主要是后端 ensure 失败的瞬态)
- *   - 星(starred=true)                叠加显示在名字前
+ * 拖拽 id 编码:'c:<convId>' / 'f:<folderId>'(__null = 未分类)。
+ * 纯函数,易测。
+ */
+export function parseDragIds(active: string, over: string | null):
+  | { kind: 'invalid' }
+  | { kind: 'moveToFolder'; convId: string; folderId: string | null } {
+  if (!over) return { kind: 'invalid' };
+  if (!active.startsWith('c:') || !over.startsWith('f:')) return { kind: 'invalid' };
+  const folderKey = over.slice(2);
+  const convId = active.slice(2);
+  const folderId = folderKey === '__null' ? null : folderKey;
+  return { kind: 'moveToFolder', convId, folderId };
+}
+
+/** 检测是否启用拖拽 sensor:只在有 hover(桌面端鼠标)的设备启用。 */
+function detectDragEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  // matchMedia 不支持时退一步默认开(避免桌面端被错误禁用)
+  if (!window.matchMedia) return true;
+  return window.matchMedia('(hover: hover)').matches;
+}
+
+/**
+ * 侧栏文件夹树:
+ * - 把会话按 folderId 分组,文件夹标题可折叠;每条会话展示三态点。
+ * - 右键/长按出 SessionContextMenu(移到文件夹/加星/关闭/恢复/删除)。
+ * - 桌面端可拖拽会话条目到文件夹标题 → patchConversation({folderId})。
+ *   移动端默认禁用拖拽 sensor,避免与长按菜单冲突。
  *
  * 本组件**只渲染列表**,不持有"新建会话/垃圾箱"等动作按钮——那些由父
  * ConversationList 负责(保留原有交互)。
- *
- * Task 14 会包 SessionContextMenu;本 task 暂时把编辑/复制/关闭做成行内按钮,
- * 后续移到右键菜单。
  */
 export interface SidebarTreeProps {
   projectId: string;
@@ -75,6 +102,43 @@ export interface SidebarTreeProps {
   renderEditor?: (conv: Conversation) => React.ReactNode;
 }
 
+/** 把每个会话条目包成 draggable。拖动靠 dot 当 handle,中间按钮区域照常可点。 */
+function DraggableItem({ convId, children }: { convId: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `c:${convId}`,
+  });
+  const style: React.CSSProperties = transform
+    ? {
+        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+        opacity: isDragging ? 0.6 : 1,
+        zIndex: isDragging ? 100 : undefined,
+      }
+    : {};
+  return (
+    <div ref={setNodeRef} style={style} className="sidebar-drag-wrap">
+      {/* 拖把手:左侧一道窄条,只占少量像素,避免吃掉条目主区域的点击 */}
+      <div className="sidebar-drag-handle" {...listeners} {...attributes} aria-label="拖动到文件夹" />
+      <div className="sidebar-drag-body">{children}</div>
+    </div>
+  );
+}
+
+/** 文件夹分组的整体作为 droppable;拖到 header 或里面 list 都算 hit. */
+function DroppableGroup({
+  folderKey,
+  children,
+}: {
+  folderKey: string;
+  children: React.ReactNode;
+}) {
+  const { isOver, setNodeRef } = useDroppable({ id: `f:${folderKey}` });
+  return (
+    <div ref={setNodeRef} className={`sidebar-group ${isOver ? 'drop-over' : ''}`}>
+      {children}
+    </div>
+  );
+}
+
 export function SidebarTree(props: SidebarTreeProps) {
   const {
     projectId,
@@ -94,6 +158,11 @@ export function SidebarTree(props: SidebarTreeProps) {
   } = props;
 
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  // 桌面端启拖拽,触摸端不启;一次检测即可,屏幕变化罕见
+  const dragEnabled = useMemo(() => detectDragEnabled(), []);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
 
   // 异步拉一次文件夹;后续 CRUD 由父 / ContextMenu 推回(本组件读 props 渲染)。
   useEffect(() => {
@@ -126,11 +195,27 @@ export function SidebarTree(props: SidebarTreeProps) {
     setCollapsed(next);
   }
 
+  async function handleDragEnd(e: DragEndEvent) {
+    const parsed = parseDragIds(String(e.active.id), e.over ? String(e.over.id) : null);
+    if (parsed.kind !== 'moveToFolder') return;
+    const conv = conversations.find((c) => c.id === parsed.convId);
+    if (!conv) return;
+    // 已经在目标文件夹,跳过 PATCH
+    if ((conv.folderId ?? null) === parsed.folderId) return;
+    // 乐观:先本地更新,失败后端没改也无视觉跳变(下次 listConversations 校准)
+    onPatched({ ...conv, folderId: parsed.folderId });
+    const r = await api
+      .patchConversation(projectId, conv.id, { folderId: parsed.folderId })
+      .catch(() => null);
+    if (r) onPatched(r.conversation);
+  }
+
   function renderGroup(label: string, key: string | null, items: Conversation[]) {
     const collapseKey = key ?? '__null';
     const isCollapsed = collapsed.has(collapseKey);
+    const folderKey = key ?? '__null';
     return (
-      <div key={collapseKey} className="sidebar-group">
+      <DroppableGroup key={folderKey} folderKey={folderKey}>
         <button
           type="button"
           className="sidebar-group-header"
@@ -142,7 +227,7 @@ export function SidebarTree(props: SidebarTreeProps) {
           <span className="sidebar-group-count">{items.length}</span>
         </button>
         {!isCollapsed && items.length === 0 && (
-          <div className="sidebar-group-empty">空</div>
+          <div className="sidebar-group-empty">空(可拖会话到此分组)</div>
         )}
         {!isCollapsed && items.length > 0 && (
           <ul className="sidebar-list">
@@ -209,9 +294,8 @@ export function SidebarTree(props: SidebarTreeProps) {
                   )}
                 </li>
               );
-              return (
+              const ctxNode = (
                 <SessionContextMenu
-                  key={c.id}
                   conv={c}
                   folders={folders}
                   projectId={projectId}
@@ -231,10 +315,18 @@ export function SidebarTree(props: SidebarTreeProps) {
                   {liNode}
                 </SessionContextMenu>
               );
+              // 桌面端用 DraggableItem 包,移动端直接用 ctxNode(不挂 sensor 也不渲染 handle)
+              return dragEnabled ? (
+                <DraggableItem key={c.id} convId={c.id}>
+                  {ctxNode}
+                </DraggableItem>
+              ) : (
+                <div key={c.id}>{ctxNode}</div>
+              );
             })}
           </ul>
         )}
-      </div>
+      </DroppableGroup>
     );
   }
 
@@ -245,7 +337,7 @@ export function SidebarTree(props: SidebarTreeProps) {
     if (r) onFoldersChange([...folders, r.folder]);
   }
 
-  return (
+  const treeBody = (
     <div className="sidebar-tree">
       {renderGroup('未分类', null, grouped.get(null) ?? [])}
       {folders.map((f) => renderGroup(f.name, f.id, grouped.get(f.id) ?? []))}
@@ -253,5 +345,13 @@ export function SidebarTree(props: SidebarTreeProps) {
         + 新建文件夹
       </button>
     </div>
+  );
+
+  // 移动端绕过 DndContext,省点 listener 注册;桌面端正常挂
+  if (!dragEnabled) return treeBody;
+  return (
+    <DndContext sensors={sensors} onDragEnd={(e) => void handleDragEnd(e)}>
+      {treeBody}
+    </DndContext>
   );
 }
