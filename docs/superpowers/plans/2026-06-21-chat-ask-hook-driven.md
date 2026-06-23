@@ -168,9 +168,9 @@ export class AskDriver {
 
 **Files:** Modify 会话装配处（`context.ts` 或 `chatRegistry`/`registry` 构造会话 deps 的地方；执行时 grep `new ChatSession(` / `ChatSessionDeps` 定位）
 
-- [ ] **Step 1**：读环境 `RCC_ASK_DIR`（默认 `~/.claude/rcc-ask`）；abs hook 路径 = `<serverRoot>/scripts/hooks/rcc-ask-hook.mjs`；settingsPath = `<askDir>/ask-hooks.settings.json`。启动时 `ensureAskHookSettings(...)` 一次；构造会话 deps 时传 `askDir`、`askSettingsArg=askLaunchExtra(...).settingsArg`、`readAskSidecar=readPendingAsk`。
+- [ ] **Step 1**：读环境 `RCC_ASK_DIR`（默认 `<repoRoot>/data/rcc-ask`）；abs hook 路径 = `<serverRoot>/scripts/hooks/rcc-ask-hook.mjs`；settingsPath = `<askDir>/ask-hooks.settings.json`。启动时 `ensureAskHookSettings(...)` 一次；构造会话 deps 时传 `askDir`、`askSettingsArg=askLaunchExtra(...).settingsArg`、`readAskSidecar=readPendingAsk`。
 - [ ] **Step 2**：`npm run typecheck` 通过。
-- [ ] **Step 3 提交**：`feat(server): 启动幂等装配 ask hook 并注入会话(默认 ~/.claude/rcc-ask)`。
+- [ ] **Step 3 提交**：`feat(server): 启动幂等装配 ask hook 并注入会话(默认 <repoRoot>/data/rcc-ask)`。
 
 ## Task 10: 前端富卡片
 

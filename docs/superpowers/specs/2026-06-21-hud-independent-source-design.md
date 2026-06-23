@@ -54,7 +54,7 @@ Claude Code ──(stdin JSON,每次刷新状态栏)──► rcc-statusline.mjs
 纯 Node builtin、**极度防御、绝不抛错破坏 TUI**：
 
 1. 读全部 stdin 成字符串 `raw`。try 解析 JSON：从 `transcript_path` 的 basename 去掉 `.jsonl` 得 `sessionId`（无则 `session_id` 字段）。
-2. 把 `raw` **原子写**到 `${RCC_STATUSLINE_DIR}/${sessionId}.json`（先写 `.<rand>.tmp` 再 `rename`，`mkdir -p`；目录来自 env `RCC_STATUSLINE_DIR`，默认 `~/.claude/rcc-statusline`）。
+2. 把 `raw` **原子写**到 `${RCC_STATUSLINE_DIR}/${sessionId}.json`（先写 `.<rand>.tmp` 再 `rename`，`mkdir -p`；目录来自 env `RCC_STATUSLINE_DIR`，默认 `<repoRoot>/data/rcc-statusline`）。
 3. **链式下游**：若 `${RCC_STATUSLINE_DIR}/downstream.sh` 存在，`spawnSync('bash', [downstream])`，把 `raw` 灌它 stdin，stdout/stderr 透传、退出码透传（保留 claude-hud）。否则**自渲染一行**兜底（`[model] ctx N% | 5h N% | wk N%`）。
 4. **任何异常都吞**：写文件失败也尽量执行下游；全失败打印空行 exit 0。**绝不能让用户所有 claude 会话状态栏报错**。
 
@@ -70,7 +70,7 @@ Claude Code ──(stdin JSON,每次刷新状态栏)──► rcc-statusline.mjs
 
 ### C. 配置 `RCC_STATUSLINE_DIR`
 
-- `config.ts`/`.env.example` 加 `RCC_STATUSLINE_DIR`（默认 `~/.claude/rcc-statusline`，相对路径相对仓库根但默认是绝对的 home 路径）。
+- `config.ts`/`.env.example` 加 `RCC_STATUSLINE_DIR`（默认 `<repoRoot>/data/rcc-statusline`，相对路径相对仓库根但默认是绝对的 home 路径）。
 - `context.ts` 把该目录注入聊天会话 deps（`statuslineDir`），ChatSession 读 sidecar 用。
 
 ### D. 聊天 HUD 数据源分层（`hudSource.ts`，纯函数 TDD）

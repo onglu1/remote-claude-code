@@ -20,9 +20,9 @@ const EnvSchema = z.object({
   PROJECTS_CONFIG: z.string().default('config/projects.json'),
   /** 添加项目时目录选择器的浏览根。默认用户 HOME；生产请显式设置到承载项目代码的目录。 */
   FS_BROWSE_ROOT: z.string().default(os.homedir()),
-  /** statusLine 捕获器落 sidecar 的目录（聊天 HUD 独立数据源）。默认 ~/.claude/rcc-statusline。 */
+  /** statusLine 捕获器落 sidecar 的目录（聊天 HUD 独立数据源）。默认 <repoRoot>/data/rcc-statusline。 */
   RCC_STATUSLINE_DIR: z.string().default(''),
-  /** AskUserQuestion hook 落 sidecar 的目录（聊天选择题真值源）。默认 ~/.claude/rcc-ask。 */
+  /** AskUserQuestion hook 落 sidecar 的目录（聊天选择题真值源）。默认 <repoRoot>/data/rcc-ask。 */
   RCC_ASK_DIR: z.string().default(''),
 });
 
@@ -75,8 +75,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     fsBrowseRoot: parsed.FS_BROWSE_ROOT,
     statuslineDir: parsed.RCC_STATUSLINE_DIR
       ? resolve(parsed.RCC_STATUSLINE_DIR)
-      : path.join(os.homedir(), '.claude', 'rcc-statusline'),
-    askDir: parsed.RCC_ASK_DIR ? resolve(parsed.RCC_ASK_DIR) : path.join(os.homedir(), '.claude', 'rcc-ask'),
+      : path.join(repoRoot, 'data', 'rcc-statusline'),
+    askDir: parsed.RCC_ASK_DIR ? resolve(parsed.RCC_ASK_DIR) : path.join(repoRoot, 'data', 'rcc-ask'),
     repoRoot,
     webDist: path.join(repoRoot, 'apps/web/dist'),
   };
