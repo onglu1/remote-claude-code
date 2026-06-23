@@ -38,6 +38,16 @@
 - `apps/web` — React + Vite:终端 `Terminal.tsx` + 聊天 `components/chat/*`。
 - 会话进程活在独立 `tmux -L rcc`,与后端解耦。
 
+### 会话生命周期(休眠 + 文件夹 + 标星)
+
+- **会话三态**:**alive**(tmux 在)、**sleeping**(`closedAt` 存在,tmux 已关)、**deleted**(`deletedAt` 存在,在垃圾桶)。前端 SidebarTree 的"三态点"按这个直接映射(绿/灰/红 + 星叠加)。
+- **空闲自动关闭**:`IdleSweeper`(`lib/session/idleSweeper.ts`)每 60s 扫一遍 `listAllAlive` 会话,对每个跑 `activity.tickActivity()` 五信号合判 busy;空闲超用户阈值(`users.settings.idleCloseHours`,默认 3,0=关功能)→ `tmux kill-session` + 写 `closedAt` + `registry.forceClose`。阈值在前端齿轮 `SettingsPanel` 改,走 `GET/PATCH /api/me/settings`。
+- **五信号**(`lib/session/activity.ts`):① 未配对 `tool_use`(transcript 增量解析)② `askDir/<sid>.json` 存在 ③ transcript mtime 滑窗变 ④ statusline sidecar mtime 滑窗变 ⑤ pane hash 滑窗变。任一为真即 busy。窗口默认 90s。冒烟 `apps/server/scripts/smoke-idle.ts` 跑真实 claude + Bash sleep 验证。
+- **休眠恢复**:点击休眠会话或菜单"恢复" → `POST .../conversations/:cid/resume` → `tmux.newDetached` + claude `--resume` → 清 `closedAt`。历史从 transcript 自然重渲(transcript 文件不动)。手动"关闭(休眠)"走 `POST .../close`,与垃圾桶软删除是两条独立路径。
+- **文件夹**(`config/folders.json` + `FolderStore`):按 (projectId, ownerId) 隔离,平铺一层(不嵌套),删非空时内部会话 folderId 自动置 null。前端 `SidebarTree` 按 folderId 分组,右键/长按 `SessionContextMenu` 子菜单 + 桌面端拖拽(`@dnd-kit/core`)+ 多选 `MultiSelectToolbar` 三路入口。
+- **标星**(`Conversation.starred`):布尔;true 时 `DELETE` 路由返 409 `starred_locked`,前端按钮 disabled、批量删除把它列入 failed。**不影响生命周期**(标星会话仍可被 IdleSweeper 关掉转休眠,只是不能进垃圾桶)。
+- **批量动作**:`POST .../conversations/batch` body `{ ids, action: 'move'|'star'|'unstar'|'close'|'softDelete', payload? }`;后端"尽力而为",单条失败进 failed 不阻断整批,前端 alert 汇总。
+
 ### 聊天模式实现要点
 
 同一个原生 tmux 会话喂两路:轮询 `capture-pane` 经 `paneScraper` 去 chrome 出**逐字流式预览**;`TranscriptTail` 监听 claude 写的 `~/.claude/projects/<cwd>/<sessionId>.jsonl`(用 `find … -name <sessionId>.jsonl` 定位)出**结构化消息**。输入用 `tmux send-keys`/`paste-buffer`;`KeyBar` 发真实按键驱动 TUI 菜单,`TerminalPeek` 兜底看原始屏。详见 `docs/superpowers/specs/2026-06-20-native-chat-ui-rebuild-design.md`。
