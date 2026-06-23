@@ -108,6 +108,8 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
         effort: conv.effort,
         cols: 120,
         rows: 40,
+        // 多用户隔离:tmux/claude 以登录身份的 unix 用户跑(默认主账号 unixUser;子用户继承父)。
+        unixUser: user.unixUser,
       };
 
       let handle: ChatHandle | null = null;

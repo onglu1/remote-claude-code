@@ -50,6 +50,11 @@ export interface ChatSpec {
   effort?: EffortLevel;
   cols: number;
   rows: number;
+  /**
+   * 多用户隔离设计 2026-06-23:拉起 tmux/claude 用的 unix 用户名。
+   * 可选(老 spec 不带);chatRegistry 工厂缺则回 ServiceUser(单用户兼容)。
+   */
+  unixUser?: string;
 }
 
 export interface TmuxLike {
@@ -227,7 +232,14 @@ export class ChatSession {
     if (!text) return;
     // 含换行(图文混合时的"文本 + uploaded images: + 路径"那种)必须走 bracketed paste,
     // 否则 \n 会被 claude TUI 当成 Enter 触发提交,一条消息被拆成 N 条。
-    await this.deps.tmux.pasteText(this.spec.tmuxName, text, text.includes('\n'));
+    const multiline = text.includes('\n');
+    await this.deps.tmux.pasteText(this.spec.tmuxName, text, multiline);
+    // bracketed paste 后紧跟 Enter 字节,ink 在 \x1b[201~ 退出 paste mode 的同一 tick 里
+    // 可能把 \r 当成 paste tail 吞掉(实测:文本进了输入框但没提交,要切到 tmux 手动回车)。
+    // 单行也加这个延迟无所谓——本来 Enter 立即到也没人发觉。
+    if (multiline) {
+      await new Promise((r) => setTimeout(r, 150));
+    }
     await this.deps.tmux.sendKeys(this.spec.tmuxName, ['Enter']);
     this.holdPreview = true;
     this.setRunning(true);
