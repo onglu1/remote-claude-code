@@ -94,7 +94,11 @@ export class ConversationStore {
       sessionId: sessionId || crypto.randomUUID(),
       // 聊天默认思考强度 max（可在聊天里切换并持久化）。
       effort: 'max',
+      // 标星默认 false;迁移逻辑也补这个字段,但新建路径要显式写,否则 schema 推断会要求必填。
+      starred: false,
       createdAt: new Date().toISOString(),
+      // lastActivityAt 与 createdAt 相同,便于前端按"最近活跃"排序时新会话也有值。
+      lastActivityAt: new Date().toISOString(),
     };
     this.write([...all, conv]);
     return conv;
