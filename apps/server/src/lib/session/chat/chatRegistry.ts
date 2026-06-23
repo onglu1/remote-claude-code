@@ -139,6 +139,17 @@ export class ChatRegistry {
     return this.entries.has(convId);
   }
 
+  /**
+   * 强制关闭一个会话的注册表 entry:停轮询、删 entry。
+   * 不通知订阅者(由调用方在 sweeper 关闭流程的最后做 WS 广播)。
+   */
+  forceClose(convId: string): void {
+    const entry = this.entries.get(convId);
+    if (!entry) return;
+    entry.session.stopPolling();
+    this.entries.delete(convId);
+  }
+
   activeCount(): number {
     return this.entries.size;
   }

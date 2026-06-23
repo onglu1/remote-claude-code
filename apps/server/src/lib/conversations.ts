@@ -67,6 +67,11 @@ export class ConversationStore {
     return this.loadAll().filter((c) => c.projectId === projectId && c.deletedAt);
   }
 
+  /** 所有非软删除且未休眠的会话(扁平,所有项目所有用户)。供 IdleSweeper 用。 */
+  listAllAlive(): StoredConversation[] {
+    return this.loadAll().filter((c) => !c.deletedAt && !c.closedAt);
+  }
+
   /** 按 id 取(无论是否软删除;调用方按需要看 deletedAt 字段)。 */
   get(convId: string): StoredConversation | undefined {
     return this.loadAll().find((c) => c.id === convId);

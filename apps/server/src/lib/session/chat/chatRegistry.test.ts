@@ -230,4 +230,20 @@ describe('ChatRegistry', () => {
     expect(fs.session.stopPolling).toHaveBeenCalledTimes(1);
     expect(reg.isActive('c')).toBe(false);
   });
+
+  it('forceClose:有 entry 时停轮询并删除', async () => {
+    const fs = fakeSession();
+    const reg = new ChatRegistry(fs.factory);
+    await reg.subscribe('conv1', spec, sub());
+    expect(reg.isActive('conv1')).toBe(true);
+    reg.forceClose('conv1');
+    expect(fs.session.stopPolling).toHaveBeenCalled();
+    expect(reg.isActive('conv1')).toBe(false);
+  });
+
+  it('forceClose:无 entry 时静默不报错', async () => {
+    const fs = fakeSession();
+    const reg = new ChatRegistry(fs.factory);
+    expect(() => reg.forceClose('nope')).not.toThrow();
+  });
 });

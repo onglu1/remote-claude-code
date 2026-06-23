@@ -98,3 +98,22 @@ describe('ConversationStore.markActivity', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe('ConversationStore.listAllAlive', () => {
+  it('过滤掉 deletedAt 与 closedAt', () => {
+    const dir = join(tmpdir(), `rcc-conv-alive-${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'conversations.json');
+    const store = new ConversationStore(file);
+
+    const a = store.create('p', 'A');
+    const b = store.create('p', 'B');
+    const c = store.create('p', 'C');
+    store.softDelete(b.id);
+    store.update(c.id, { closedAt: '2026-06-23T00:00:00Z' });
+
+    const alive = store.listAllAlive();
+    expect(alive.map((x) => x.id)).toEqual([a.id]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
