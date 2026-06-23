@@ -54,11 +54,21 @@ export const SubUserSchema = z.object({
 });
 export type SubUser = z.infer<typeof SubUserSchema>;
 
-/** 脱敏的「当前用户」：给前端与鉴权挂载用，绝不含 passwordHash。 */
+/**
+ * 脱敏的「当前用户」:给前端与鉴权挂载用,绝不含 passwordHash。
+ * 主账号登录:id=user.id, kind='user', parentId 不填, namespaceId=user.id;
+ * 子用户登录:id=subUser.id, kind='subuser', parentId=父 user.id, namespaceId=subUser.id。
+ * unixUser/role 都解析自有效身份(子用户从父继承)。
+ * 多用户隔离设计 2026-06-23 扩展。
+ */
 export const AuthUserSchema = z.object({
   id: z.string().min(1),
   username: z.string().min(1),
   role: RoleSchema,
+  kind: z.enum(['user', 'subuser']),
+  parentId: z.string().min(1).optional(),
+  unixUser: z.string().min(1),
+  namespaceId: z.string().min(1),
 });
 export type AuthUser = z.infer<typeof AuthUserSchema>;
 

@@ -109,9 +109,23 @@ describe('RoleSchema / UserSchema / AuthUserSchema', () => {
     ).toThrow();
   });
 
-  it('AuthUser 只含脱敏字段', () => {
-    const a = AuthUserSchema.parse({ id: 'u1', username: 'alice', role: 'admin' });
-    expect(a).toEqual({ id: 'u1', username: 'alice', role: 'admin' });
+  it('AuthUser 主账号形态', () => {
+    const a = AuthUserSchema.parse({
+      id: 'u1', username: 'alice', role: 'admin',
+      kind: 'user', unixUser: 'alice', namespaceId: 'u1',
+    });
+    expect(a.kind).toBe('user');
+    expect(a.parentId).toBeUndefined();
+    expect(a.namespaceId).toBe('u1');
+  });
+
+  it('AuthUser 子用户形态(含 parentId,unixUser 从父继承)', () => {
+    const a = AuthUserSchema.parse({
+      id: 's1', username: 'alice_dev', role: 'user',
+      kind: 'subuser', parentId: 'u1', unixUser: 'alice', namespaceId: 's1',
+    });
+    expect(a.kind).toBe('subuser');
+    expect(a.parentId).toBe('u1');
   });
 });
 
