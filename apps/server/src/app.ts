@@ -20,6 +20,7 @@ import { registerSessionRoutes } from './routes/sessions';
 import { registerFolderRoutes } from './routes/folders';
 import { registerChatRoutes } from './routes/chat';
 import { registerMetricsRoutes } from './routes/metrics';
+import { registerMeRoutes } from './routes/me';
 import { IdleSweeper } from './lib/session/idleSweeper';
 import { createActivityState, tickActivity, type ActivityIO, type ActivityState } from './lib/session/activity';
 import { locateTranscript } from './lib/session/chat/transcript';
@@ -51,6 +52,7 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
   await registerFolderRoutes(app, ctx);
   await registerChatRoutes(app, ctx);
   await registerMetricsRoutes(app, ctx);
+  await registerMeRoutes(app, ctx);
 
   // ---- IdleSweeper:每 60s 扫一次非休眠会话,超阈值就杀 tmux + 写 closedAt + 清 chatRegistry。
   // 活动探测器五信号:transcript jsonl 增量 tool_use、ask sidecar、transcript mtime、
