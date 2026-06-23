@@ -28,6 +28,8 @@ logs/
 start.sh
 start-dev.sh
 
-# 部署/公网暴露脚本（Cloudflare/Tailscale/frp/nginx/cron 健康检查...）
-# 标准 fullstack OSS 项目不内置部署方案；用户在本机 deploy/ 自行管理
-deploy/
+# 部署/公网暴露脚本(Cloudflare/Tailscale/frp/nginx/cron 健康检查...)
+# 标准 fullstack OSS 项目不内置部署方案;用户在本机 deploy/ 自行管理。
+# 但 deploy/*.example 是给所有人复制的模板(如 sudoers 样例),要进 git。
+deploy/*
+!deploy/*.example

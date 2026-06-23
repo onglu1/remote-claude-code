@@ -156,6 +156,50 @@ task/evidence 的网页编辑(状态/链接/标签)写入 `docs/.rcc-meta.json` 
 
 ---
 
+## 多用户部署(可选)
+
+remote-cc 现在支持把每个 rcc 主账号绑定到本机一个真 unix 用户,让 tmux/claude 以该 unix 身份跑 —— 创建的文件 owner 是各自的、claude 读到的 `~/.claude/`(订阅/token)也是各自的。一个主账号下还能挂多个**子用户**,各自独立用户名/口令登录,unix 身份继承父,资源在 web 层按子用户独立 namespace。
+
+**单用户场景零迁移**:不配 unixUser 字段就和单用户老逻辑一样,跟 admin 跑在同一个 unix 下。
+
+### 安装步骤
+
+1. **创建目标 unix 用户**(本机操作,rcc 不替代 useradd):
+   ```bash
+   sudo useradd -m -s /bin/bash zhangsan
+   sudo passwd zhangsan
+   ```
+2. **让目标 unix 用户登一次自己的 claude**(为了它有自己的 `~/.claude/.credentials.json`):
+   ```bash
+   sudo -u zhangsan -i  # 或者 su - zhangsan
+   claude /login        # 走完 OAuth
+   exit
+   ```
+3. **配 sudoers**:把 `deploy/sudoers.remote-cc.example` 按本机情况(ServiceUser 名、目标 unix 名、claude 二进制路径)改好,放到 `/etc/sudoers.d/remote-cc`:
+   ```bash
+   sudo cp deploy/sudoers.remote-cc.example /etc/sudoers.d/remote-cc
+   sudo vim /etc/sudoers.d/remote-cc      # 改用户名 + 路径
+   sudo visudo -c -f /etc/sudoers.d/remote-cc  # 语法校验
+   sudo chmod 0440 /etc/sudoers.d/remote-cc
+   ```
+4. **(可选)配 per-unix 浏览根**:`.env` 里加 `RCC_FS_BROWSE_ROOT_zhangsan=/home/zhangsan/projects`(缺省回退 `~zhangsan/projects`)。
+5. **rcc 网页:admin 登录 → 用户管理 → 新增用户**,unixUser 字段填 `zhangsan`。
+6. **新用户登录验收**:用 zhangsan/口令登 rcc,建项目(path 在 zhangsan 家目录下),开聊天发一条 prompt,`ls -la <文件>` 验证 owner=zhangsan。
+7. **(可选)子用户**:admin 或主账号在用户管理里给 zhangsan 挂子用户 zhangsan_dev/zhangsan_research,各自独立口令登录、独立 namespace,但 unix 身份都是 zhangsan。
+
+### 工作流
+
+- **想用自己的 claude + 文件 owner 是自己** → 做主账号
+- **想用别人的 claude + 文件 owner 也是别人** → 做别人的子用户
+- **想跨子用户/主账号共享 claude 订阅而 owner 不同**:本设计不支持(攻击面大),走"做对方的子用户"或"自己登 claude"
+
+### 安全须知
+
+- **sudoers 白名单严格**:绝不开 `(ALL)` 通配,绝不开 `bash`/`sh`,命令路径用绝对路径。
+- **不开 root 目标**:sudoers `User=` 一栏只列普通 unix 用户,不含 root。
+- **`bash -ic` 不经过 sudo**:tmux 在目标 uid 下 fork bash,sudo 这里只跑 tmux 二进制本身。
+- 跨 unix 文件浏览也走 sudo + stat/cat;**ServiceUser 与目标相同时零开销路径直 exec**。
+
 ## Security
 
 This thing runs `claude` and arbitrary shells on the host machine on behalf of whoever logs in with `ADMIN_PASSWORD`. Practically that means it's a remote terminal. **Treat it accordingly:**

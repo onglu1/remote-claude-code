@@ -48,6 +48,18 @@
 - **标星**(`Conversation.starred`):布尔;true 时 `DELETE` 路由返 409 `starred_locked`,前端按钮 disabled、批量删除把它列入 failed。**不影响生命周期**(标星会话仍可被 IdleSweeper 关掉转休眠,只是不能进垃圾桶)。
 - **批量动作**:`POST .../conversations/batch` body `{ ids, action: 'move'|'star'|'unstar'|'close'|'softDelete', payload? }`;后端"尽力而为",单条失败进 failed 不阻断整批,前端 alert 汇总。
 
+### 多用户身份(unix 隔离 + 子用户)
+
+- **三层模型**:**Unix 用户**(物理 OS 账号,各自 `~/.claude`)→ **rcc 主账号**(1:1 绑 unix 用户,`users.json` 有 `unixUser` 字段)→ **子用户**(N:1 挂在主账号下,`subusers.json`,独立用户名/口令登录,unix 身份继承父,资源 namespace=自己)。详见 `docs/superpowers/specs/2026-06-23-multi-user-unix-isolation-design.md`。
+- **命令包装**(`lib/session/runAs.ts`):所有 tmux/claude/stat/cat 调用过 `runAs(unixUser, file, args)`。**零开销路径**:目标 unix === ServiceUser 时直 exec(等同单用户老逻辑,行为零变化);跨 unix 时拼 `sudo -n -H -u <user> --`(non-interactive 配错立刻报错,-H 切 HOME 让 claude 读对方 `~/.claude`)。
+- **Tmux 实例化绑 unixUser**:`new Tmux({ socket, unixUser, currentUser })`;socket 名 `rcc-<unixUser>`(跨 unix tmux server 各自一份),内部所有 exec 走 `runAs`。`AppContext.getTmux(unixUser)` lazy 缓存。
+- **AuthUser 字段**:`{ id, username, role, kind: 'user'|'subuser', parentId?, unixUser, namespaceId }`。**namespaceId** 是资源归属 key:主账号=user.id,子用户=subUser.id(子用户与父独立,与同父其他子用户也独立);`canSeeProject` / projects / folders 全部按 namespaceId 比对。`req.user.unixUser` 用于命令包装,`req.user.namespaceId` 用于归属过滤。
+- **sidecar 按 unix 用户分子目录**:`askDir/<unixUser>/` 和 `statuslineDir/<unixUser>/`(hook 进程跑在目标 uid 下,settings.json 也每个 unix 用户独立一份;子用户共享父的 unix 子目录)。`context.askLaunchFor(unixUser)` lazy 创建。
+- **不引入"share claude 配置"**:想用别人的 claude 订阅 → 做别人的子用户(unix 身份继承=共享对方 `~/.claude`);"借别人订阅但文件 owner 是自己"这种状态被刻意砍掉,攻击面太大。
+- **登录路径**:`POST /api/auth/login` 先查 UserStore,再查 SubUserStore;`resolveUser` 同时支持两种 sub(token sub 既可能是 user.id 也可能是 subUser.id;子用户 parent 被删 → 401)。**`/api/auth/unlock` 兼容别名只走主账号 admin**,子用户不能用这条。
+- **不做的事**:每 rcc 账号独立 unix(可向前兼容,但本期 N:1 优先);root 主进程 / setuid worker / 容器隔离;跨账号资源分享。
+- **部署门槛**:`/etc/sudoers.d/remote-cc` 白名单(命令绝对路径,不开 ALL/bash);每个 unix 用户自己登一次 claude 拿订阅;admin 在 UI 给主账号填 unixUser。详细步骤见 `README.md` 多用户部署章节 + `deploy/sudoers.remote-cc.example`。
+
 ### 聊天模式实现要点
 
 同一个原生 tmux 会话喂两路:轮询 `capture-pane` 经 `paneScraper` 去 chrome 出**逐字流式预览**;`TranscriptTail` 监听 claude 写的 `~/.claude/projects/<cwd>/<sessionId>.jsonl`(用 `find … -name <sessionId>.jsonl` 定位)出**结构化消息**。输入用 `tmux send-keys`/`paste-buffer`;`KeyBar` 发真实按键驱动 TUI 菜单,`TerminalPeek` 兜底看原始屏。详见 `docs/superpowers/specs/2026-06-20-native-chat-ui-rebuild-design.md`。

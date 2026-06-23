@@ -1,0 +1,32 @@
+# /etc/sudoers.d/remote-cc 的样例
+# 多用户 unix 隔离(多用户隔离设计 2026-06-23)。
+#
+# 用途:让运行 rcc 服务的 unix 用户(ServiceUser,如 wangleyan)能以 NOPASSWD 方式
+# 切到目标 unix 用户跑 tmux/claude/文件操作。命令白名单严格,不开通配,不开 bash/sh。
+#
+# 用法:
+#   1) 把本文件复制到 /etc/sudoers.d/remote-cc(必须 root 操作)
+#   2) 按本机情况改:
+#        - ServiceUser 改成你跑 ./start.sh 的用户名(本例 wangleyan)
+#        - (zhangsan,lisi) 改成你打算给 rcc 主账号绑的真 unix 用户们
+#        - claude 二进制路径改成 `which claude` 输出的绝对路径
+#   3) sudo visudo -c -f /etc/sudoers.d/remote-cc 校验语法
+#   4) chmod 0440 /etc/sudoers.d/remote-cc(sudo 要求严格权限)
+#
+# 安全须知:
+#   - 不开 ALL=(ALL),只列具体目标 unix 用户名;
+#   - 不开 bash/sh,bash -ic 在 tmux fork 子进程时跑,不经过 sudo;
+#   - 命令路径全用绝对路径,避免 PATH 攻击;
+#   - tee 是上传图片落盘走 runAs 用;
+#   - 改完不影响"目标 unix 用户 = ServiceUser"的零开销路径(根本不走 sudo)。
+
+wangleyan ALL=(zhangsan,lisi) NOPASSWD: \
+    /usr/bin/tmux, \
+    /usr/local/bin/claude, \
+    /usr/bin/stat, \
+    /usr/bin/cat, \
+    /usr/bin/ls, \
+    /usr/bin/find, \
+    /usr/bin/tee, \
+    /usr/bin/cp, \
+    /usr/bin/mkdir
