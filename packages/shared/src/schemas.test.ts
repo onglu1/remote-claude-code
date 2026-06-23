@@ -181,6 +181,31 @@ describe('FolderSchema', () => {
   });
 });
 
+describe('UserSchema with unixUser', () => {
+  it('接受带 unixUser 的用户', () => {
+    const u = UserSchema.parse({
+      id: 'u1',
+      username: 'alice',
+      passwordHash: 'h',
+      role: 'user',
+      createdAt: '2026-06-23T00:00:00Z',
+      unixUser: 'alice',
+    });
+    expect(u.unixUser).toBe('alice');
+  });
+
+  it('不带 unixUser 仍合法(兼容存量,context 启动时回填)', () => {
+    const u = UserSchema.parse({
+      id: 'u1',
+      username: 'alice',
+      passwordHash: 'h',
+      role: 'user',
+      createdAt: '2026-06-23T00:00:00Z',
+    });
+    expect(u.unixUser).toBeUndefined();
+  });
+});
+
 describe('decodeClientMessage', () => {
   it('解析 input', () => {
     expect(decodeClientMessage('{"type":"input","data":"ls\\r"}')).toEqual({

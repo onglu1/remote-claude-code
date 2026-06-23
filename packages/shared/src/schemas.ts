@@ -18,6 +18,12 @@ export const UserSchema = z.object({
   passwordHash: z.string().min(1),
   role: RoleSchema,
   createdAt: z.string(),
+  /**
+   * 绑定的本机 unix 用户名(多用户隔离用):tmux/claude/fs 命令以这个 uid 执行,
+   * 创建的文件 owner 是该 unix 用户。schema 上 optional 以兼容存量,
+   * context 启动时把缺省的回填为运行服务的 unix 用户(零行为变化)。
+   */
+  unixUser: z.string().min(1).optional(),
   /** 用户偏好。idleCloseHours: 空闲自动关闭阈值小时(0=关闭功能,默认 3)。 */
   settings: z
     .object({
