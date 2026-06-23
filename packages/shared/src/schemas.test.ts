@@ -5,6 +5,7 @@ import {
   ConversationSchema,
   RoleSchema,
   UserSchema,
+  SubUserSchema,
   AuthUserSchema,
   ScrollbackChunkSchema,
   FolderSchema,
@@ -176,6 +177,34 @@ describe('FolderSchema', () => {
       FolderSchema.parse({
         id: 'fld_x', projectId: 'p', ownerId: 'u',
         name: 'x'.repeat(41), createdAt: '2026-01-01T00:00:00Z',
+      }),
+    ).toThrow();
+  });
+});
+
+describe('SubUserSchema', () => {
+  it('合法子用户解析,settings 默认值', () => {
+    const s = SubUserSchema.parse({
+      id: 's1',
+      parentId: 'u1',
+      username: 'alice_dev',
+      passwordHash: 'h',
+      displayName: '开发',
+      createdAt: '2026-06-23T00:00:00Z',
+    });
+    expect(s.parentId).toBe('u1');
+    expect(s.settings.idleCloseHours).toBe(3);
+  });
+
+  it('displayName 长度上限 40', () => {
+    expect(() =>
+      SubUserSchema.parse({
+        id: 's1',
+        parentId: 'u1',
+        username: 'alice_dev',
+        passwordHash: 'h',
+        displayName: 'x'.repeat(41),
+        createdAt: '2026-06-23T00:00:00Z',
       }),
     ).toThrow();
   });

@@ -33,6 +33,27 @@ export const UserSchema = z.object({
 });
 export type User = z.infer<typeof UserSchema>;
 
+/**
+ * 子用户：挂在主账号下,独立用户名/口令登录,unix 身份继承父(不可改),
+ * 资源 namespace 是自己 id(与父主账号独立)。同 unix 下子用户互相在 unix 层零隔离。
+ * 多用户隔离设计 2026-06-23 新增。
+ */
+export const SubUserSchema = z.object({
+  id: z.string().min(1),
+  parentId: z.string().min(1),
+  username: z.string().min(1),
+  passwordHash: z.string().min(1),
+  displayName: z.string().min(1).max(40),
+  createdAt: z.string(),
+  /** 偏好独立于父(如空闲自动关闭阈值)。 */
+  settings: z
+    .object({
+      idleCloseHours: z.number().int().min(0).max(48).default(3),
+    })
+    .default({ idleCloseHours: 3 }),
+});
+export type SubUser = z.infer<typeof SubUserSchema>;
+
 /** 脱敏的「当前用户」：给前端与鉴权挂载用，绝不含 passwordHash。 */
 export const AuthUserSchema = z.object({
   id: z.string().min(1),
