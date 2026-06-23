@@ -14,7 +14,7 @@ const SettingsSchema = z.object({ idleCloseHours: z.number().int().min(0).max(48
  * 鉴权走 requireAuth(普通用户仅能改自己的)。管理员要改别人的走 admin 路由,这里不暴露。
  */
 export async function registerMeRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
-  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users);
+  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users, ctx.subUsers);
 
   app.get('/api/me/settings', { preHandler: requireAuth }, async (req) => {
     const u = ctx.users.get(req.user!.id);

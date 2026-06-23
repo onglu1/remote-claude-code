@@ -9,7 +9,7 @@ import { listSubdirs, PathTraversalError } from '../lib/files';
  */
 export async function registerFsRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
   // 任意登录用户都可浏览目录（用于新建自己的项目）；目录浏览不涉及项目可见性。
-  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users);
+  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users, ctx.subUsers);
 
   app.get('/api/fs/dirs', { preHandler: requireAuth }, async (req, reply) => {
     const { path: relPath = '' } = req.query as { path?: string };

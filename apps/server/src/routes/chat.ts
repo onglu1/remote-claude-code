@@ -31,7 +31,7 @@ function saveImage(dataB64: string, mime: string, name: string): string {
 }
 
 export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
-  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users);
+  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users, ctx.subUsers);
 
   // 图片以 raw octet-stream 上传(无需 multipart 依赖):前端 fetch POST 整段 ArrayBuffer,
   // 后端这条解析器把 body 收成 Buffer。仅这条路由生效,不污染 JSON 默认解析。
@@ -81,7 +81,7 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
     '/api/projects/:id/conversations/:cid/chat',
     { websocket: true },
     (socket: WebSocket, req) => {
-      const user = resolveUser(ctx.config.sessionSecret, ctx.users, req.cookies?.[COOKIE_NAME]);
+      const user = resolveUser(ctx.config.sessionSecret, ctx.users, ctx.subUsers, req.cookies?.[COOKIE_NAME]);
       if (!user) {
         socket.close(1008, 'unauthorized');
         return;

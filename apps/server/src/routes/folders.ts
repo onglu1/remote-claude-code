@@ -21,7 +21,7 @@ const PatchSchema = z.object({
  * 项目可见性走 canSeeProject;此处 folder 所有权再做一层(避免管理员误改普通用户的文件夹归属)。
  */
 export async function registerFolderRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
-  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users);
+  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users, ctx.subUsers);
 
   app.get('/api/projects/:id/folders', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };

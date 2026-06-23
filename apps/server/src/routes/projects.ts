@@ -15,7 +15,7 @@ const CreateSchema = z.object({
 });
 
 export async function registerProjectRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
-  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users);
+  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users, ctx.subUsers);
 
   app.get('/api/projects', { preHandler: requireAuth }, async (req) => {
     const user = req.user!;

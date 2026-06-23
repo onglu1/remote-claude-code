@@ -73,6 +73,16 @@ export class UserStore {
     return users[i];
   }
 
+  /** 改绑定的 unix 用户名(admin 在管理 UI 改;runtime 行为下次启动会话生效)。 */
+  setUnixUser(id: string, unixUser: string): User | undefined {
+    const users = this.load();
+    const i = users.findIndex((u) => u.id === id);
+    if (i === -1) return undefined;
+    users[i] = { ...users[i], unixUser };
+    this.write(users);
+    return users[i];
+  }
+
   /** 更新用户偏好(空闲自动关闭阈值等)。 */
   updateSettings(id: string, settings: { idleCloseHours: number }): User | undefined {
     const users = this.load();

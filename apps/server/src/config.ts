@@ -24,6 +24,10 @@ const EnvSchema = z.object({
   RCC_STATUSLINE_DIR: z.string().default(''),
   /** AskUserQuestion hook 落 sidecar 的目录（聊天选择题真值源）。默认 <repoRoot>/data/rcc-ask。 */
   RCC_ASK_DIR: z.string().default(''),
+  /** 服务运行的 unix 用户名(供 runAs 零开销判断)。默认 = os.userInfo().username。 */
+  RCC_SERVICE_USER: z.string().default(''),
+  /** claude 二进制路径(写进 sudoers 白名单时也用)。默认 'claude' 由 PATH 解析。 */
+  RCC_CLAUDE_BINARY: z.string().default('claude'),
 });
 
 export type Config = {
@@ -47,6 +51,14 @@ export type Config = {
   statuslineDir: string;
   /** AskUserQuestion hook sidecar 目录的绝对路径（聊天选择题真值源）。 */
   askDir: string;
+  /** 子用户存储 JSON 路径(与 users.json 同目录)。多用户隔离设计 2026-06-23。 */
+  subUsersConfigPath: string;
+  /** 服务运行的 unix 用户名;= RCC_SERVICE_USER 或 os.userInfo().username。 */
+  serviceUser: string;
+  /** claude 二进制(绝对路径或 PATH 可找到);跨 unix 时配合 sudoers 白名单。 */
+  claudeBinary: string;
+  /** per-unix-user 浏览根:RCC_FS_BROWSE_ROOT_<UNIXUSER> env 解析;缺省回退 ~<user>/projects。 */
+  fsBrowseRootMap: Record<string, string>;
   repoRoot: string;
   webDist: string;
 };
@@ -60,6 +72,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const repoRoot = path.resolve(import.meta.dirname, '../../..');
   const resolve = (p: string) => (path.isAbsolute(p) ? p : path.join(repoRoot, p));
   const projectsConfigPath = resolve(parsed.PROJECTS_CONFIG);
+  const fsBrowseRootMap: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (k.startsWith('RCC_FS_BROWSE_ROOT_') && typeof v === 'string' && v) {
+      fsBrowseRootMap[k.slice('RCC_FS_BROWSE_ROOT_'.length)] = v;
+    }
+  }
   return {
     port: parsed.PORT,
     host: parsed.HOST,
@@ -80,6 +98,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       ? resolve(parsed.RCC_STATUSLINE_DIR)
       : path.join(repoRoot, 'data', 'rcc-statusline'),
     askDir: parsed.RCC_ASK_DIR ? resolve(parsed.RCC_ASK_DIR) : path.join(repoRoot, 'data', 'rcc-ask'),
+    subUsersConfigPath: path.join(path.dirname(projectsConfigPath), 'subusers.json'),
+    serviceUser: parsed.RCC_SERVICE_USER || os.userInfo().username,
+    claudeBinary: parsed.RCC_CLAUDE_BINARY,
+    fsBrowseRootMap,
     repoRoot,
     webDist: path.join(repoRoot, 'apps/web/dist'),
   };

@@ -15,7 +15,7 @@ function browserFor(project: Project): FileBrowser {
 }
 
 export async function registerFileRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
-  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users);
+  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users, ctx.subUsers);
 
   app.get('/api/projects/:id/files', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };

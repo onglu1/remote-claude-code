@@ -9,7 +9,7 @@ import { MetricsSampler } from '../lib/metrics';
  * 路由内持有单例 Sampler，复用其 1.5s TTL 缓存以避免高并发刷爆 nvidia-smi。
  */
 export async function registerMetricsRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
-  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users);
+  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users, ctx.subUsers);
   const sampler = new MetricsSampler();
 
   app.get('/api/metrics', { preHandler: requireAuth }, async () => {

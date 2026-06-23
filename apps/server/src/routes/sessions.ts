@@ -43,7 +43,7 @@ const BatchSchema = z.object({
 });
 
 export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
-  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users);
+  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users, ctx.subUsers);
 
   // 会话存活判定：tmux 命中其 tmuxName，或注册表里仍活跃。
   async function aliveOf(conv: { id: string; tmuxName: string }): Promise<boolean> {
@@ -421,7 +421,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     '/api/projects/:id/conversations/:cid/stream',
     { websocket: true },
     (socket: WebSocket, req) => {
-      const user = resolveUser(ctx.config.sessionSecret, ctx.users, req.cookies?.[COOKIE_NAME]);
+      const user = resolveUser(ctx.config.sessionSecret, ctx.users, ctx.subUsers, req.cookies?.[COOKIE_NAME]);
       if (!user) {
         socket.close(1008, 'unauthorized');
         return;

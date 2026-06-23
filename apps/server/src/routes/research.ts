@@ -44,7 +44,7 @@ const PARAMS = z.object({ id: z.string() });
  * 每个写 endpoint 完成后 rebuildIndex + invalidate 缓存。
  */
 export async function registerResearchRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
-  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users);
+  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users, ctx.subUsers);
 
   // 取项目并校验可见;不可见与不存在一样返回 null → 调用方 404。
   const resolve = (req: FastifyRequest) => {

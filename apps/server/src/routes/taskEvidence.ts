@@ -16,7 +16,7 @@ export async function registerTaskEvidenceRoutes(
   app: FastifyInstance,
   ctx: AppContext,
 ): Promise<void> {
-  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users);
+  const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users, ctx.subUsers);
 
   // 取 store 前先校验项目可见性（不可见与不存在一样返回 null → 404）。
   const storeFor = (id: string, req: FastifyRequest): TaskEvidenceStore | null => {
