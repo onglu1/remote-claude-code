@@ -85,8 +85,27 @@ export const ConversationSchema = z.object({
   createdAt: z.string(),
   /** 软删除时间(ISO);存在 = 在垃圾箱里(不出现在常规列表,可恢复或彻底删)。 */
   deletedAt: z.string().optional(),
+  /** 文件夹归属;null/缺省 = 未分类。 */
+  folderId: z.string().nullable().optional(),
+  /** 标星;默认 false。标星会话拒绝软删除。 */
+  starred: z.boolean().default(false),
+  /** 最近活跃时间(ISO),由活动探测器维护。 */
+  lastActivityAt: z.string().optional(),
+  /** 空闲自动关闭时间戳(ISO);存在=休眠中,resume 后清空。 */
+  closedAt: z.string().optional(),
 });
 export type Conversation = z.infer<typeof ConversationSchema>;
+
+/** 会话文件夹;按项目+用户隔离,平铺一层(不嵌套)。 */
+export const FolderSchema = z.object({
+  id: z.string().min(1),
+  projectId: z.string().min(1),
+  ownerId: z.string().min(1),
+  name: z.string().trim().min(1).max(40),
+  sortOrder: z.number().int().default(0),
+  createdAt: z.string(),
+});
+export type Folder = z.infer<typeof FolderSchema>;
 
 /** 文件浏览条目。 */
 export const FileEntrySchema = z.object({

@@ -7,6 +7,7 @@ import {
   UserSchema,
   AuthUserSchema,
   ScrollbackChunkSchema,
+  FolderSchema,
 } from './schemas';
 import { decodeClientMessage } from './ws';
 
@@ -110,6 +111,73 @@ describe('RoleSchema / UserSchema / AuthUserSchema', () => {
   it('AuthUser 只含脱敏字段', () => {
     const a = AuthUserSchema.parse({ id: 'u1', username: 'alice', role: 'admin' });
     expect(a).toEqual({ id: 'u1', username: 'alice', role: 'admin' });
+  });
+});
+
+describe('ConversationSchema 扩字段', () => {
+  it('starred 默认 false', () => {
+    const c = ConversationSchema.parse({
+      id: 'a', projectId: 'p', name: 'n', tmuxName: 't',
+      sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      alive: false, createdAt: '2026-01-01T00:00:00Z',
+    });
+    expect(c.starred).toBe(false);
+    expect(c.folderId).toBeUndefined();
+    expect(c.closedAt).toBeUndefined();
+    expect(c.lastActivityAt).toBeUndefined();
+  });
+
+  it('接受 folderId / starred=true / closedAt / lastActivityAt', () => {
+    const c = ConversationSchema.parse({
+      id: 'a', projectId: 'p', name: 'n', tmuxName: 't',
+      sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      alive: false, createdAt: '2026-01-01T00:00:00Z',
+      folderId: 'fld_1', starred: true,
+      closedAt: '2026-01-02T00:00:00Z',
+      lastActivityAt: '2026-01-01T05:00:00Z',
+    });
+    expect(c.folderId).toBe('fld_1');
+    expect(c.starred).toBe(true);
+    expect(c.closedAt).toBe('2026-01-02T00:00:00Z');
+  });
+
+  it('folderId 可以是 null(显式未分类)', () => {
+    const c = ConversationSchema.parse({
+      id: 'a', projectId: 'p', name: 'n', tmuxName: 't',
+      sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      alive: false, createdAt: '2026-01-01T00:00:00Z',
+      folderId: null,
+    });
+    expect(c.folderId).toBeNull();
+  });
+});
+
+describe('FolderSchema', () => {
+  it('完整字段解析', () => {
+    const f = FolderSchema.parse({
+      id: 'fld_abc12345', projectId: 'p', ownerId: 'u',
+      name: '工程', sortOrder: 0,
+      createdAt: '2026-01-01T00:00:00Z',
+    });
+    expect(f.name).toBe('工程');
+    expect(f.sortOrder).toBe(0);
+  });
+
+  it('sortOrder 缺省=0', () => {
+    const f = FolderSchema.parse({
+      id: 'fld_abc12345', projectId: 'p', ownerId: 'u',
+      name: 'x', createdAt: '2026-01-01T00:00:00Z',
+    });
+    expect(f.sortOrder).toBe(0);
+  });
+
+  it('name 长度上限 40', () => {
+    expect(() =>
+      FolderSchema.parse({
+        id: 'fld_x', projectId: 'p', ownerId: 'u',
+        name: 'x'.repeat(41), createdAt: '2026-01-01T00:00:00Z',
+      }),
+    ).toThrow();
   });
 });
 
