@@ -29,16 +29,30 @@ export class ConversationStore {
     }));
   }
 
-  /** 一次性迁移：给缺 sessionId 的存量记录补一个并落盘（旧版会话无 sessionId）。 */
+  /**
+   * 一次性迁移：给老数据补缺失字段:
+   *  - sessionId 缺 → 随机 UUID(旧版会话无 sessionId)
+   *  - starred undefined → false
+   *  - lastActivityAt 缺且有 createdAt → 用 createdAt 兜底
+   */
   migrate(): void {
     const list = this.loadRaw();
     let changed = false;
     const next = list.map((c) => {
-      if (!c.sessionId) {
+      const patch: Partial<StoredConversation> = { ...c };
+      if (!patch.sessionId) {
         changed = true;
-        return { ...c, sessionId: crypto.randomUUID() };
+        patch.sessionId = crypto.randomUUID();
       }
-      return c;
+      if (patch.starred === undefined) {
+        changed = true;
+        patch.starred = false;
+      }
+      if (!patch.lastActivityAt && patch.createdAt) {
+        changed = true;
+        patch.lastActivityAt = patch.createdAt;
+      }
+      return patch;
     });
     if (changed) this.write(next as StoredConversation[]);
   }
@@ -89,6 +103,11 @@ export class ConversationStore {
     all[i] = { ...all[i], ...patch, id: all[i].id };
     this.write(all);
     return all[i];
+  }
+
+  /** 仅更新 lastActivityAt;比 update 路径轻,活动探测器高频调用专用。 */
+  markActivity(convId: string, ts: string): StoredConversation | undefined {
+    return this.update(convId, { lastActivityAt: ts });
   }
 
   /** 软删除:打 deletedAt 戳,不真的删 metadata,可恢复。 */

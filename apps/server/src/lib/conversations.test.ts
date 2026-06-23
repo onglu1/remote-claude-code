@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ConversationStore } from './conversations';
@@ -59,5 +59,42 @@ describe('ConversationStore', () => {
     const s = newStore();
     const c = s.create('p', '接续', 'ab12cd34-ef56-7890-abcd-1234567890ab');
     expect(c.sessionId).toBe('ab12cd34-ef56-7890-abcd-1234567890ab');
+  });
+});
+
+describe('ConversationStore migrate 扩字段', () => {
+  it('给老数据补 starred=false 和 lastActivityAt=createdAt', () => {
+    const dir = join(tmpdir(), `rcc-conv-test-${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'conversations.json');
+    writeFileSync(file, JSON.stringify([
+      { id: 'a', projectId: 'p', name: 'n', tmuxName: 't',
+        sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        effort: 'max', createdAt: '2026-01-01T00:00:00Z' },
+    ], null, 2));
+
+    const store = new ConversationStore(file);
+    store.migrate();
+
+    const loaded = store.listByProject('p');
+    expect(loaded[0].starred).toBe(false);
+    expect(loaded[0].lastActivityAt).toBe('2026-01-01T00:00:00Z');
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('ConversationStore.markActivity', () => {
+  it('更新 lastActivityAt 到当前 now', () => {
+    const dir = join(tmpdir(), `rcc-conv-test-${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'conversations.json');
+    const store = new ConversationStore(file);
+    const conv = store.create('p', '会话 X');
+
+    const t1 = '2026-06-23T10:00:00.000Z';
+    const updated = store.markActivity(conv.id, t1);
+
+    expect(updated?.lastActivityAt).toBe(t1);
+    rmSync(dir, { recursive: true, force: true });
   });
 });
