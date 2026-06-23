@@ -78,6 +78,7 @@ export const api = {
     username: string;
     password: string;
     displayName: string;
+    role?: Role;
   }) => req<{ subuser: Omit<SubUser, 'passwordHash'> }>('POST', '/api/admin/subusers', s),
   adminSetSubUserPassword: (id: string, password: string) =>
     req<{ subuser: Omit<SubUser, 'passwordHash'> }>('PATCH', `/api/admin/subusers/${id}`, {
@@ -86,6 +87,10 @@ export const api = {
   adminRenameSubUser: (id: string, displayName: string) =>
     req<{ subuser: Omit<SubUser, 'passwordHash'> }>('PATCH', `/api/admin/subusers/${id}`, {
       displayName,
+    }),
+  adminSetSubUserRole: (id: string, role: Role) =>
+    req<{ subuser: Omit<SubUser, 'passwordHash'> }>('PATCH', `/api/admin/subusers/${id}`, {
+      role,
     }),
   adminDeleteSubUser: (id: string) =>
     req<{ ok: true }>('DELETE', `/api/admin/subusers/${id}`),

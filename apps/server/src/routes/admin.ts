@@ -7,6 +7,7 @@ import {
   makeRequireAdminRole,
   toAuthUserFromPrimary,
 } from '../plugins/requireAuth';
+import { canHaveRole } from '../lib/roleRank';
 
 const CreateSchema = z.object({
   username: z.string().min(1),
@@ -85,15 +86,18 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: AppContext)
 
   // ---- 子用户 CRUD(多用户隔离设计 2026-06-23) ----
   // 子用户登录不能管子用户(防递归);主账号 user 只能管自己父下的;admin 看全部。
+  // 子用户独立 role(2026-06-23 补丁);路由层强制 sub.role <= parent.role,父 user 不能挂 admin 子。
   const SubCreateSchema = z.object({
     parentId: z.string().min(1),
     username: z.string().min(1),
     password: z.string().min(1),
     displayName: z.string().trim().min(1).max(40),
+    role: z.enum(['admin', 'user']).default('user'),
   });
   const SubPatchSchema = z.object({
     password: z.string().min(1).optional(),
     displayName: z.string().trim().min(1).max(40).optional(),
+    role: z.enum(['admin', 'user']).optional(),
   });
 
   const subAuth = { preHandler: requireAuth };
@@ -117,6 +121,10 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: AppContext)
     }
     const parent = ctx.users.get(parse.data.parentId);
     if (!parent) return reply.code(400).send({ error: 'parent_not_found' });
+    // 子用户 role 不能超过父(admin > user)。父 user 想挂 admin 子用户 → 400。
+    if (!canHaveRole(parent.role, parse.data.role)) {
+      return reply.code(400).send({ error: 'role_exceeds_parent' });
+    }
     try {
       const hash = await argon2.hash(parse.data.password);
       const sub = ctx.subUsers.add({
@@ -124,6 +132,7 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: AppContext)
         username: parse.data.username,
         passwordHash: hash,
         displayName: parse.data.displayName,
+        role: parse.data.role,
       });
       const { passwordHash: _ph, ...rest } = sub;
       return { subuser: rest };
@@ -150,6 +159,14 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: AppContext)
     }
     if (parse.data.displayName) {
       updated = ctx.subUsers.rename(id, parse.data.displayName) ?? updated;
+    }
+    if (parse.data.role) {
+      const parent = ctx.users.get(target.parentId);
+      if (!parent) return reply.code(400).send({ error: 'parent_not_found' });
+      if (!canHaveRole(parent.role, parse.data.role)) {
+        return reply.code(400).send({ error: 'role_exceeds_parent' });
+      }
+      updated = ctx.subUsers.setRole(id, parse.data.role) ?? updated;
     }
     const { passwordHash: _ph, ...rest } = updated;
     return { subuser: rest };

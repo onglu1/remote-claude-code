@@ -66,6 +66,8 @@ export async function buildContext(config: Config): Promise<AppContext> {
   }
   // 多用户隔离:回填缺 unixUser 的存量用户为 serviceUser(默认行为零变化)。
   users.migrate(config.serviceUser);
+  // 子用户存量数据可能缺 role 字段(2026-06-23 补丁前建的),回填 'user'。
+  subUsers.migrate();
 
   // 存量项目缺 ownerId 的回填为 admin(多用户上线前的项目都归 admin)。
   const admin = users.findByUsername(config.adminUsername);

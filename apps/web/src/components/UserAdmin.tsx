@@ -382,6 +382,16 @@ function SubUserPanel({
     }
   };
 
+  const toggleRole = async (s: SubUserView) => {
+    const next: Role = s.role === 'admin' ? 'user' : 'admin';
+    try {
+      await api.adminSetSubUserRole(s.id, next);
+      onChange();
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  };
+
   return (
     <div style={{ ...panelStyle, marginLeft: 'var(--sp-4)', marginTop: 'var(--sp-2)' }}>
       <div className="sub" style={{ marginBottom: 'var(--sp-3)' }}>
@@ -400,6 +410,22 @@ function SubUserPanel({
               <div className="name">{s.displayName}</div>
               <div className="sub">login: {s.username}</div>
             </div>
+            <span className={`tag ${s.role === 'admin' ? 'research' : 'dev'}`}>
+              {s.role === 'admin' ? '管理员' : '普通用户'}
+            </span>
+            <button
+              className="btn ghost sm"
+              style={{ marginLeft: 'var(--sp-2) ' }}
+              onClick={() => toggleRole(s)}
+              disabled={parent.role !== 'admin' && s.role === 'user'}
+              title={
+                parent.role !== 'admin' && s.role === 'user'
+                  ? '父账号是普通用户,不能升级子用户为管理员'
+                  : undefined
+              }
+            >
+              {s.role === 'admin' ? '降为 user' : '升为 admin'}
+            </button>
             <button
               className="btn ghost sm"
               style={{ marginLeft: 'var(--sp-2)' }}
@@ -465,6 +491,7 @@ function AddSubUserForm({
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [role, setRole] = useState<Role>('user');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -478,6 +505,7 @@ function AddSubUserForm({
         username,
         password,
         displayName,
+        role,
       });
       onAdded();
     } catch (e) {
@@ -519,6 +547,19 @@ function AddSubUserForm({
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
+      </div>
+      <div className="field">
+        <label>角色</label>
+        <select
+          className="input"
+          value={role}
+          onChange={(e) => setRole(e.target.value as Role)}
+        >
+          <option value="user">普通用户</option>
+          <option value="admin" disabled={parent.role !== 'admin'}>
+            管理员{parent.role !== 'admin' ? '(父非 admin,不可选)' : ''}
+          </option>
+        </select>
       </div>
       {error && <div className="error">{error}</div>}
       <div style={{ display: 'flex', gap: 'var(--sp-3)', marginTop: 'var(--sp-2)' }}>

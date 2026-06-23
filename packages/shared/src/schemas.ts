@@ -45,6 +45,12 @@ export const SubUserSchema = z.object({
   passwordHash: z.string().min(1),
   displayName: z.string().min(1).max(40),
   createdAt: z.string(),
+  /**
+   * 子用户独立角色:默认 'user'(兼容旧版无此字段的存量数据)。
+   * 路由层强制 sub.role <= parent.role(admin > user);runtime resolveUser 再做一次
+   * clamp 兜底(数据被手改时不至于越权)。这样子用户不再被迫继承父 admin。
+   */
+  role: RoleSchema.default('user'),
   /** 偏好独立于父(如空闲自动关闭阈值)。 */
   settings: z
     .object({

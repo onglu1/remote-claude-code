@@ -197,7 +197,7 @@ describe('FolderSchema', () => {
 });
 
 describe('SubUserSchema', () => {
-  it('合法子用户解析,settings 默认值', () => {
+  it('合法子用户解析,settings 默认值,role 默认 user(兼容存量)', () => {
     const s = SubUserSchema.parse({
       id: 's1',
       parentId: 'u1',
@@ -208,6 +208,17 @@ describe('SubUserSchema', () => {
     });
     expect(s.parentId).toBe('u1');
     expect(s.settings.idleCloseHours).toBe(3);
+    expect(s.role).toBe('user');
+  });
+
+  it('显式 role=admin 合法(由路由层约束 <= parent.role)', () => {
+    const s = SubUserSchema.parse({
+      id: 's1', parentId: 'u1',
+      username: 'a', passwordHash: 'h', displayName: 'd',
+      createdAt: '2026-06-23T00:00:00Z',
+      role: 'admin',
+    });
+    expect(s.role).toBe('admin');
   });
 
   it('displayName 长度上限 40', () => {

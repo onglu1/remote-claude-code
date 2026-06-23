@@ -3,6 +3,7 @@ import type { AuthUser, User, SubUser } from '@rcc/shared';
 import { verifyToken, COOKIE_NAME } from '../lib/auth';
 import type { UserStore } from '../lib/users';
 import type { SubUserStore } from '../lib/subUsers';
+import { minRole } from '../lib/roleRank';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -73,12 +74,15 @@ export function toAuthUserFromPrimary(u: User): AuthUser {
   };
 }
 
-/** 子用户 → AuthUser:role/unixUser 继承父;namespaceId === subUser.id(资源与父独立)。 */
+/**
+ * 子用户 → AuthUser:role 用子用户自己的(独立于父),clamp 到不超过 parent.role 防数据被绕过;
+ * unixUser 继承父(unix 身份是父的);namespaceId === subUser.id(资源与父独立)。
+ */
 export function toAuthUserFromSub(s: SubUser, parent: User): AuthUser {
   return {
     id: s.id,
     username: s.username,
-    role: parent.role,
+    role: minRole(s.role, parent.role),
     kind: 'subuser',
     parentId: parent.id,
     unixUser: parent.unixUser ?? 'unknown',

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { SubUserSchema, type SubUser } from '@rcc/shared';
+import { SubUserSchema, type SubUser, type Role } from '@rcc/shared';
 import type { UserStore } from './users';
 
 export interface SubUserCreate {
@@ -9,6 +9,8 @@ export interface SubUserCreate {
   username: string;
   passwordHash: string;
   displayName: string;
+  /** 可选;不传默认 user(routes 层强制 sub.role <= parent.role)。 */
+  role?: Role;
 }
 
 /**
@@ -64,9 +66,46 @@ export class SubUserStore {
       passwordHash: input.passwordHash,
       displayName: input.displayName,
       createdAt: new Date().toISOString(),
+      role: input.role ?? 'user',
     });
     this.write([...all, sub]);
     return sub;
+  }
+
+  /** 改子用户角色(路由层应已校验 newRole <= parent.role)。 */
+  setRole(id: string, role: Role): SubUser | undefined {
+    const all = this.load();
+    const i = all.findIndex((s) => s.id === id);
+    if (i === -1) return undefined;
+    all[i] = { ...all[i], role };
+    this.write(all);
+    return all[i];
+  }
+
+  /**
+   * 回填缺 role 字段的存量子用户为 'user'。
+   * zod default 在 parse 时帮忙补,但不写盘;migrate 把它持久化,避免下次 load 又靠 default。
+   * 幂等:已有 role 不动。
+   */
+  migrate(): void {
+    const raw = this.loadRaw();
+    let changed = false;
+    const next = raw.map((s) => {
+      if (!s.role) {
+        changed = true;
+        return { ...s, role: 'user' as Role };
+      }
+      return s;
+    });
+    if (changed) this.write(next as SubUser[]);
+  }
+
+  /** 直读裸数据用于迁移(不走 zod parse,免得 default 把数据"看起来"补齐). */
+  private loadRaw(): Array<Partial<SubUser>> {
+    if (!fs.existsSync(this.file)) return [];
+    const raw = fs.readFileSync(this.file, 'utf8').trim();
+    if (!raw) return [];
+    return JSON.parse(raw) as Array<Partial<SubUser>>;
   }
 
   setPassword(id: string, passwordHash: string): SubUser | undefined {
