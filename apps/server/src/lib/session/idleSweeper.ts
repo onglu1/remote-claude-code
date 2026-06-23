@@ -1,0 +1,83 @@
+import type { TickResult } from './activity';
+
+/**
+ * IdleSweeper 不依赖具体 ConversationStore/UserStore/Tmux/Registry 类,
+ * 只声明它需要的最小能力;app.ts 接好真实实例后注入即可。
+ */
+export interface SweeperDeps {
+  conversations: {
+    listAllAlive: () => Array<{ id: string; projectId: string; tmuxName: string; sessionId: string; ownerId?: string }>;
+    update: (id: string, patch: { closedAt?: string }) => unknown;
+  };
+  users: {
+    getSettings: (ownerId: string) => { idleCloseHours: number };
+  };
+  tmux: {
+    killSession: (name: string) => Promise<void>;
+  };
+  registry: {
+    isActive: (id: string) => boolean;
+    forceClose: (id: string) => void;
+  };
+  measureIdle: (conv: { id: string; tmuxName: string; sessionId: string }) => TickResult;
+  now: () => number;
+}
+
+export interface SweeperOpts {
+  intervalMs?: number;
+  defaultThresholdHours?: number;
+}
+
+/**
+ * 周期扫所有未休眠/未删除的 conversations:
+ *  - busy=true → 跳过
+ *  - idleCloseHours=0 → 跳过(用户关了自动关闭功能)
+ *  - idleForMs ≥ 阈值 → killSession + 写 closedAt + registry.forceClose
+ *
+ * 写 closedAt 的副作用走 deps.conversations.update,
+ * 由 sessions.ts 路由层包一层后再广播 convClosed WS 事件。
+ */
+export class IdleSweeper {
+  private timer: NodeJS.Timeout | null = null;
+  constructor(
+    private readonly deps: SweeperDeps,
+    private readonly opts: SweeperOpts = {},
+  ) {}
+
+  start(): void {
+    if (this.timer) return;
+    const interval = this.opts.intervalMs ?? 60_000;
+    this.timer = setInterval(() => {
+      this.sweepOnce().catch(() => { /* 静默,下一 tick 再试 */ });
+    }, interval);
+    if (typeof (this.timer as { unref?: () => void }).unref === 'function') {
+      (this.timer as { unref: () => void }).unref();
+    }
+  }
+
+  stop(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  async sweepOnce(): Promise<void> {
+    const now = this.deps.now();
+    const defaultHours = this.opts.defaultThresholdHours ?? 3;
+    for (const c of this.deps.conversations.listAllAlive()) {
+      const ownerId = c.ownerId;
+      const thresholdHours = ownerId
+        ? this.deps.users.getSettings(ownerId).idleCloseHours
+        : defaultHours;
+      if (thresholdHours <= 0) continue;  // 用户关了自动关闭
+      const r = this.deps.measureIdle(c);
+      if (r.busy) continue;
+      if (r.idleForMs < thresholdHours * 3600_000) continue;
+
+      await this.deps.tmux.killSession(c.tmuxName);
+      this.deps.conversations.update(c.id, { closedAt: new Date(now).toISOString() });
+      this.deps.registry.forceClose(c.id);
+    }
+  }
+}
