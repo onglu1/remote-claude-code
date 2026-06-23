@@ -13,13 +13,16 @@ export interface SweeperDeps {
     getSettings: (ownerId: string) => { idleCloseHours: number };
   };
   tmux: {
-    killSession: (name: string) => Promise<void>;
+    /** ownerId 用于多用户隔离时按 conv 解析目标 unix 用户;不传则用 ServiceUser 路径(兼容老调用)。 */
+    killSession: (name: string, ownerId?: string) => Promise<void>;
   };
   registry: {
     isActive: (id: string) => boolean;
     forceClose: (id: string) => void;
   };
-  measureIdle: (conv: { id: string; tmuxName: string; sessionId: string }) => TickResult;
+  measureIdle: (
+    conv: { id: string; tmuxName: string; sessionId: string; ownerId?: string },
+  ) => TickResult;
   now: () => number;
 }
 
@@ -75,7 +78,7 @@ export class IdleSweeper {
       if (r.busy) continue;
       if (r.idleForMs < thresholdHours * 3600_000) continue;
 
-      await this.deps.tmux.killSession(c.tmuxName);
+      await this.deps.tmux.killSession(c.tmuxName, c.ownerId);
       this.deps.conversations.update(c.id, { closedAt: new Date(now).toISOString() });
       this.deps.registry.forceClose(c.id);
     }

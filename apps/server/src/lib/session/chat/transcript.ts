@@ -171,6 +171,26 @@ function defaultProjectsDir(): string {
   return join(homedir(), '.claude', 'projects');
 }
 
+/**
+ * 给定 unixUser 解析其 ~/.claude/projects 路径。
+ * 多用户隔离设计:locateTranscript / launchFlag 不能默认用 ServiceUser 的 home,
+ * 否则 zhangrengang 跑的 claude 写的 transcript 永远找不到,
+ * 网页显示的总是 ServiceUser 那份(老消息+串号)。
+ *
+ *   - unixUser === serviceUser → 用 homedir()(零开销路径,等于现状)
+ *   - 跨 unix → /home/<unixUser>/.claude/projects(Linux 约定;
+ *     非标准家目录的少数环境靠 env 兜底,目前未实现)
+ *
+ * 注:当前进程(ServiceUser uid)读跨 unix 用户的家目录需对应 r/x 权限
+ * (~ 默认 755 → 通常 OK;transcript 文件本身 600 → 需 sudo cat,
+ * 但 existsSync/find 只 stat,通常无需 sudo)。读文件内容由 TranscriptTail 处理,
+ * 当前用 node fs;若跨 unix 权限不通,后续可扩展为 runAs cat。
+ */
+export function projectsDirFor(unixUser: string, serviceUser: string): string {
+  if (unixUser === serviceUser) return join(homedir(), '.claude', 'projects');
+  return join('/home', unixUser, '.claude', 'projects');
+}
+
 /** 用全局唯一的 sessionId 在 ~/.claude/projects/* 下定位 transcript（免去 cwd 编码规则）。 */
 export function locateTranscript(sessionId: string, baseDir = defaultProjectsDir()): string | null {
   if (!existsSync(baseDir)) return null;

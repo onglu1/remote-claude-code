@@ -23,7 +23,7 @@ import { registerMetricsRoutes } from './routes/metrics';
 import { registerMeRoutes } from './routes/me';
 import { IdleSweeper } from './lib/session/idleSweeper';
 import { createActivityState, tickActivity, type ActivityIO, type ActivityState } from './lib/session/activity';
-import { locateTranscript } from './lib/session/chat/transcript';
+import { locateTranscript, projectsDirFor } from './lib/session/chat/transcript';
 
 export interface BuildAppOptions {
   /** 测试时可注入已构建好的 context（跳过 argon2 等）。 */
@@ -92,6 +92,20 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
   // markActivity 节流:同一会话最多 60s 一次写盘,避免高频活动把 lastActivityAt 写飞。
   const lastActivityWriteTimes = new Map<string, number>();
 
+  // 多用户隔离:按 ownerId(可能是 user.id 或 subUser.id) 查到对应 unixUser。
+  // 用于 sweeper / measureIdle 决定:tmux 在哪个 socket 杀、transcript 在哪个家找。
+  function resolveUnixUser(ownerId?: string): string {
+    if (!ownerId) return ctx.config.serviceUser;
+    const u = ctx.users.get(ownerId);
+    if (u?.unixUser) return u.unixUser;
+    const s = ctx.subUsers.get(ownerId);
+    if (s) {
+      const parent = ctx.users.get(s.parentId);
+      if (parent?.unixUser) return parent.unixUser;
+    }
+    return ctx.config.serviceUser;
+  }
+
   const sweeper = new IdleSweeper(
     {
       conversations: {
@@ -112,7 +126,14 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
       users: {
         getSettings: (uid) => ctx.users.get(uid)?.settings ?? { idleCloseHours: 3 },
       },
-      tmux: { killSession: (n) => ctx.tmux.killSession(n) },
+      // 多用户隔离设计:按 conversation owner 解析 unixUser,
+      // 否则跨 unix 用户的 idle kill 永远落在 ServiceUser socket 上,杀不到。
+      tmux: {
+        killSession: (n, ownerId) => {
+          const unixUser = resolveUnixUser(ownerId);
+          return ctx.getTmux(unixUser).killSession(n);
+        },
+      },
       registry: {
         isActive: (id) => ctx.chatRegistry.isActive(id),
         forceClose: (id) => ctx.chatRegistry.forceClose(id),
@@ -123,14 +144,19 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
           state = createActivityState(Date.now());
           activityStates.set(c.id, state);
         }
+        // 多用户隔离:transcript / sidecar 路径按 conversation owner 的 unixUser 解析。
+        const unixUser = resolveUnixUser(c.ownerId);
         const r = tickActivity(
           state,
           {
-            transcriptPath: locateTranscript(c.sessionId),
+            transcriptPath: locateTranscript(
+              c.sessionId,
+              projectsDirFor(unixUser, ctx.config.serviceUser),
+            ),
             tmuxName: c.tmuxName,
             sessionId: c.sessionId,
-            statuslineDir: ctx.config.statuslineDir,
-            askDir: ctx.config.askDir,
+            statuslineDir: `${ctx.config.statuslineDir}/${unixUser}`,
+            askDir: `${ctx.config.askDir}/${unixUser}`,
           },
           activityIO,
           90_000,

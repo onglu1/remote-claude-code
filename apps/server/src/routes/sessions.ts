@@ -7,7 +7,7 @@ import type { AppContext } from '../context';
 import { makeRequireAuth, resolveUser } from '../plugins/requireAuth';
 import { COOKIE_NAME } from '../lib/auth';
 import { canSeeProject } from '../lib/authz';
-import { launchFlag, locateTranscript } from '../lib/session/chat/transcript';
+import { launchFlag, locateTranscript, projectsDirFor } from '../lib/session/chat/transcript';
 import { effortFlag } from '../lib/session/effort';
 import { computeWindow } from '../lib/session/scrollback';
 import { readPendingAsk } from '../lib/session/chat/askSidecar';
@@ -241,8 +241,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
         launchCommand: project.launchCommand,
         sessionId: conv.sessionId,
         effort: conv.effort,
-        hasTranscript: locateTranscript(conv.sessionId) !== null,
-        askLaunch: ctx.askLaunch,
+        hasTranscript: locateTranscript(conv.sessionId, projectsDirFor(req.user!.unixUser, ctx.config.serviceUser)) !== null,
+        askLaunch: ctx.askLaunchFor(req.user!.unixUser),
       });
       try {
         await ctx.getTmux(req.user!.unixUser).newDetached(conv.tmuxName, project.path, cmd, 120, 40);
@@ -409,8 +409,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
         launchCommand: project.launchCommand,
         sessionId: conv.sessionId,
         effort: conv.effort,
-        hasTranscript: locateTranscript(conv.sessionId) !== null,
-        askLaunch: ctx.askLaunch,
+        hasTranscript: locateTranscript(conv.sessionId, projectsDirFor(req.user!.unixUser, ctx.config.serviceUser)) !== null,
+        askLaunch: ctx.askLaunchFor(req.user!.unixUser),
       });
       try {
         await ctx.getTmux(req.user!.unixUser).newDetached(conv.tmuxName, project.path, cmd, cols, rows);
@@ -446,7 +446,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       // 终端视图也带 sessionId 启动（保证切到聊天视图能定位 transcript）；
       // 关键：已用过(transcript 存在)必须 --resume，否则 --session-id 会因
       // "Session ID already in use" 报错退出，表现为每次重启都打开新的。
-      const command = `${project.launchCommand} ${effortFlag(conv.effort)} ${launchFlag(conv.sessionId)}`;
+      const command = `${project.launchCommand} ${effortFlag(conv.effort)} ${launchFlag(conv.sessionId, projectsDirFor(user.unixUser, ctx.config.serviceUser))}`;
       const handle = ctx.registry.subscribe(
         cid,
         { tmuxName: conv.tmuxName, cwd: project.path, command, cols, rows },

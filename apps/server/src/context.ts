@@ -13,7 +13,7 @@ import { makeRealBridgeFactory } from './lib/session/ptyBridge';
 import { ChatRegistry } from './lib/session/chat/chatRegistry';
 import { ChatSession } from './lib/session/chat/chatSession';
 import { scrapePane } from './lib/session/chat/paneScraper';
-import { TranscriptTail, locateTranscript } from './lib/session/chat/transcript';
+import { TranscriptTail, locateTranscript, projectsDirFor } from './lib/session/chat/transcript';
 import { ensureAskHookSettings, askLaunchExtra } from './lib/session/chat/askHookSettings';
 import { readPendingAsk, askSidecarPath } from './lib/session/chat/askSidecar';
 import { ResearchProviderRegistry } from './lib/researchProvider';
@@ -120,14 +120,17 @@ export async function buildContext(config: Config): Promise<AppContext> {
     const perUserAskLaunch = askLaunchFor(effectiveUnixUser);
     const userAskDir = path.join(config.askDir, effectiveUnixUser);
     const userStatuslineDir = path.join(config.statuslineDir, effectiveUnixUser);
-    const tail = new TranscriptTail(() => locateTranscript(spec.sessionId));
+    // 多用户隔离:transcript 路径走目标 unix 用户 home,
+    // 不走 ServiceUser home(否则 zhangrengang claude 写的 jsonl 永远找不到)。
+    const projectsDir = projectsDirFor(effectiveUnixUser, config.serviceUser);
+    const tail = new TranscriptTail(() => locateTranscript(spec.sessionId, projectsDir));
     return new ChatSession(
       spec,
       {
         tmux: perUserTmux,
         scrape: scrapePane,
         tail,
-        hasTranscript: () => locateTranscript(spec.sessionId) !== null,
+        hasTranscript: () => locateTranscript(spec.sessionId, projectsDir) !== null,
         statuslineDir: userStatuslineDir,
         readSidecar: (p: string) => {
           const content = readFileSync(p, 'utf8');
