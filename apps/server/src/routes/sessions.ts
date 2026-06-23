@@ -35,6 +35,13 @@ const PatchConvSchema = z
     { message: '至少提供一个可改字段' },
   );
 
+// 批量动作入参:ids 限 1..200 防一次太重;action 决定后续解析路径(move 还要 payload.folderId)。
+const BatchSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(200),
+  action: z.enum(['move', 'star', 'unstar', 'close', 'softDelete']),
+  payload: z.object({ folderId: z.string().nullable().optional() }).optional(),
+});
+
 export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
   const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users);
 
@@ -182,6 +189,124 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       const updated = ctx.conversations.update(cid, parse.data);
       if (!updated) return reply.code(404).send({ error: 'conversation not found' });
       return { conversation: { ...updated, alive: await aliveOf(updated) } };
+    },
+  );
+
+  // ---- 生命周期:手动 close(休眠)/ resume(从休眠拉回)/ batch(批量动作)----
+  // close:幂等。已 closedAt 直接返回当前状态。
+  // 杀 tmux 释放 claude TUI;transcript 不动,resume 后 --resume 接续。
+  app.post(
+    '/api/projects/:id/conversations/:cid/close',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const { id, cid } = req.params as { id: string; cid: string };
+      const project = ctx.projects.get(id);
+      if (!project || !canSeeProject(req.user!, project)) {
+        return reply.code(404).send({ error: 'project not found' });
+      }
+      const conv = ctx.conversations.get(cid);
+      if (!conv || conv.projectId !== id) {
+        return reply.code(404).send({ error: 'conversation not found' });
+      }
+      if (conv.closedAt) return { conversation: { ...conv, alive: false } };
+      await ctx.tmux.killSession(conv.tmuxName);
+      ctx.chatRegistry.forceClose(cid);
+      const updated = ctx.conversations.update(cid, { closedAt: new Date().toISOString() });
+      return { conversation: { ...updated, alive: false } };
+    },
+  );
+
+  // resume:幂等。未 closedAt 直接返回当前状态(alive 实时探)。
+  // 否则用 buildClaudeCmd 沿 reflow 模式拉起 tmux + claude --resume(或 --session-id 首次)。
+  app.post(
+    '/api/projects/:id/conversations/:cid/resume',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const { id, cid } = req.params as { id: string; cid: string };
+      const project = ctx.projects.get(id);
+      if (!project || !canSeeProject(req.user!, project)) {
+        return reply.code(404).send({ error: 'project not found' });
+      }
+      const conv = ctx.conversations.get(cid);
+      if (!conv || conv.projectId !== id) {
+        return reply.code(404).send({ error: 'conversation not found' });
+      }
+      if (!conv.closedAt) return { conversation: { ...conv, alive: await aliveOf(conv) } };
+      const cmd = buildClaudeCmd({
+        launchCommand: project.launchCommand,
+        sessionId: conv.sessionId,
+        effort: conv.effort,
+        hasTranscript: locateTranscript(conv.sessionId) !== null,
+        askLaunch: ctx.askLaunch,
+      });
+      try {
+        await ctx.tmux.newDetached(conv.tmuxName, project.path, cmd, 120, 40);
+      } catch (e) {
+        return reply.code(500).send({ error: `resume failed: ${(e as Error).message}` });
+      }
+      const updated = ctx.conversations.update(cid, { closedAt: undefined });
+      return { conversation: { ...updated, alive: true } };
+    },
+  );
+
+  // batch:多选批量动作单点入口。move/star/unstar/close/softDelete;
+  // 任一项失败(starred 项 softDelete、folderId 不存在、id 找不到)进 failed 列表不中断整批。
+  app.post(
+    '/api/projects/:id/conversations/batch',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const project = ctx.projects.get(id);
+      if (!project || !canSeeProject(req.user!, project)) {
+        return reply.code(404).send({ error: 'project not found' });
+      }
+      const parse = BatchSchema.safeParse(req.body ?? {});
+      if (!parse.success) return reply.code(400).send({ error: 'bad request' });
+      const { ids, action, payload } = parse.data;
+      const succeeded: string[] = [];
+      const failed: { id: string; reason: string }[] = [];
+      for (const cid of ids) {
+        const conv = ctx.conversations.get(cid);
+        if (!conv || conv.projectId !== id) {
+          failed.push({ id: cid, reason: 'not_found' });
+          continue;
+        }
+        try {
+          if (action === 'move') {
+            const folderId = payload?.folderId ?? null;
+            if (folderId !== null) {
+              const f = ctx.folders.get(folderId);
+              if (!f || f.projectId !== id) {
+                failed.push({ id: cid, reason: 'folder_not_found' });
+                continue;
+              }
+            }
+            ctx.conversations.update(cid, { folderId });
+          } else if (action === 'star') {
+            ctx.conversations.update(cid, { starred: true });
+          } else if (action === 'unstar') {
+            ctx.conversations.update(cid, { starred: false });
+          } else if (action === 'close') {
+            if (!conv.closedAt) {
+              await ctx.tmux.killSession(conv.tmuxName);
+              ctx.chatRegistry.forceClose(cid);
+              ctx.conversations.update(cid, { closedAt: new Date().toISOString() });
+            }
+          } else if (action === 'softDelete') {
+            if (conv.starred) {
+              failed.push({ id: cid, reason: 'starred_locked' });
+              continue;
+            }
+            await ctx.tmux.killSession(conv.tmuxName);
+            ctx.chatRegistry.forceClose(cid);
+            ctx.conversations.softDelete(cid);
+          }
+          succeeded.push(cid);
+        } catch (e) {
+          failed.push({ id: cid, reason: (e as Error).message });
+        }
+      }
+      return { succeeded, failed };
     },
   );
 
