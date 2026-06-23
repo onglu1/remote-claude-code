@@ -5,6 +5,7 @@ import type { Config } from './config';
 import { ProjectStore } from './lib/projects';
 import { UserStore } from './lib/users';
 import { ConversationStore } from './lib/conversations';
+import { FolderStore } from './lib/folders';
 import { Tmux } from './lib/session/tmux';
 import { SessionRegistry } from './lib/session/registry';
 import { makeRealBridgeFactory } from './lib/session/ptyBridge';
@@ -23,6 +24,8 @@ export interface AppContext {
   projects: ProjectStore;
   users: UserStore;
   conversations: ConversationStore;
+  /** 文件夹存储:Task 8 先标 optional 让 PATCH 路由防御读;Task 9 接入 buildContext 后转必填。 */
+  folders?: FolderStore;
   tmux: Tmux;
   registry: SessionRegistry;
   chatRegistry: ChatRegistry;

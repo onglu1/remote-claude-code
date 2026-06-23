@@ -22,8 +22,18 @@ const CreateConvSchema = z.object({
     .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, '需要标准 UUID 格式')
     .optional(),
 });
-// 改名：trim 后非空、长度 ≤ 60。z.string().trim() 先 trim 再校验，data.name 即已去空白。
-const RenameConvSchema = z.object({ name: z.string().trim().min(1).max(60) });
+// PATCH 入参:三选一(name/folderId/starred),至少给一个字段;trim 与长度约束保持旧 rename 语义。
+// folderId:undefined=不改、null=显式清除、字符串=指向某文件夹(下方路由校验存在与归属)。
+const PatchConvSchema = z
+  .object({
+    name: z.string().trim().min(1).max(60).optional(),
+    folderId: z.string().nullable().optional(),
+    starred: z.boolean().optional(),
+  })
+  .refine(
+    (v) => v.name !== undefined || v.folderId !== undefined || v.starred !== undefined,
+    { message: '至少提供一个可改字段' },
+  );
 
 export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
   const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users);
@@ -128,6 +138,10 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
         return reply.code(404).send({ error: 'conversation not found' });
       }
       const hard = (req.query as { hard?: string }).hard === '1';
+      // 标星会话拒软删(避免误丢进垃圾箱);硬删 hard=1 是显式动作,不拦。
+      if (!hard && conv.starred) {
+        return reply.code(409).send({ error: 'starred_locked' });
+      }
       // tmux 一定杀(无论软/硬):软删时如果 TUI 还活着,留着也没意义且占资源。
       await ctx.tmux.killSession(conv.tmuxName);
       if (hard) {
@@ -139,7 +153,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     },
   );
 
-  // 改名：复用 ConversationStore.update；与其它会话路由同样的可见性过滤。
+  // 局部更新：name / folderId / starred。folderId 必须指向本项目存在文件夹;null 显式清除归属。
+  // 复用 ConversationStore.update;与其它会话路由同样的可见性过滤。
   app.patch(
     '/api/projects/:id/conversations/:cid',
     { preHandler: requireAuth },
@@ -149,13 +164,22 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       if (!project || !canSeeProject(req.user!, project)) {
         return reply.code(404).send({ error: 'project not found' });
       }
-      const parse = RenameConvSchema.safeParse(req.body ?? {});
-      if (!parse.success) return reply.code(400).send({ error: 'bad request' });
+      const parse = PatchConvSchema.safeParse(req.body ?? {});
+      if (!parse.success) {
+        return reply.code(400).send({ error: parse.error.issues[0]?.message ?? 'bad request' });
+      }
       const conv = ctx.conversations.get(cid);
       if (!conv || conv.projectId !== id) {
         return reply.code(404).send({ error: 'conversation not found' });
       }
-      const updated = ctx.conversations.update(cid, { name: parse.data.name });
+      // folderId 非空时校验存在且属于本项目;null 表示显式清除归属(允许)。
+      if (parse.data.folderId !== undefined && parse.data.folderId !== null) {
+        const f = ctx.folders?.get?.(parse.data.folderId);
+        if (!f || f.projectId !== id) {
+          return reply.code(400).send({ error: 'folder not found' });
+        }
+      }
+      const updated = ctx.conversations.update(cid, parse.data);
       if (!updated) return reply.code(404).send({ error: 'conversation not found' });
       return { conversation: { ...updated, alive: await aliveOf(updated) } };
     },
