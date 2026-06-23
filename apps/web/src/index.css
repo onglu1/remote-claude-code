@@ -1836,3 +1836,56 @@ select.input {
 .empty-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .empty-actions .primary.outline { background: transparent; color: #3b82f6; border: 1px solid #3b82f6; }
 .research-sync-hint { padding: 2px 12px; font-size: 11px; color: var(--muted, #737373); background: var(--surface, #f5f5f5); border-bottom: 1px solid var(--border, #e5e5e5); }
+
+/* ---- 侧栏文件夹树(SidebarTree)---- */
+.sidebar-tree { display: flex; flex-direction: column; gap: var(--sp-3); }
+.sidebar-group { display: flex; flex-direction: column; gap: var(--sp-2); }
+.sidebar-group-header {
+  display: flex; justify-content: space-between; align-items: center;
+  background: none; border: none; padding: 0 var(--sp-2);
+  font-family: inherit; font-size: 12px; letter-spacing: 0.06em;
+  color: var(--muted); text-transform: uppercase;
+  cursor: pointer; width: 100%; text-align: left;
+}
+.sidebar-group-header:hover { color: var(--ink-soft); }
+.sidebar-group-name { display: inline-flex; align-items: center; gap: 4px; }
+.sidebar-group-count {
+  font-variant-numeric: tabular-nums;
+  background: var(--surface-sunken); border-radius: 999px;
+  padding: 1px 8px; font-size: 11px;
+}
+.sidebar-group-empty {
+  color: var(--muted); font-size: 12px;
+  padding: var(--sp-2) var(--sp-3); font-style: italic;
+}
+.sidebar-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.sidebar-item {
+  display: flex; align-items: center; gap: var(--sp-3);
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: var(--sp-3) var(--sp-4);
+}
+.sidebar-item:active { background: var(--surface-sunken); }
+.sidebar-item.sleeping { opacity: 0.78; }
+.sidebar-item.sleeping .name { color: var(--ink-soft); }
+.sidebar-item .star { color: var(--warn); font-size: 14px; flex: none; }
+.sidebar-item .dot.sleeping { background: var(--line-strong); }
+.sidebar-item .dot.dead { background: var(--danger); opacity: 0.55; }
+.sidebar-item-open {
+  background: none; border: none; text-align: left; padding: 0;
+  color: var(--ink); min-width: 0; cursor: pointer;
+}
+.sidebar-item-open .name {
+  font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sidebar-item-open .sub {
+  color: var(--muted); font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sidebar-edit { display: flex; gap: var(--sp-2); align-items: center; }
+.sidebar-new-folder {
+  background: none; border: 1px dashed var(--line-strong);
+  color: var(--ink-soft); padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--radius); width: 100%; cursor: pointer;
+  font-family: inherit; font-size: 14px;
+}
+.sidebar-new-folder:hover { background: var(--surface); }

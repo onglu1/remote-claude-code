@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Project, Conversation } from '@rcc/shared';
+import type { Project, Conversation, Folder } from '@rcc/shared';
 import { api } from '../lib/api';
+import { SidebarTree } from './SidebarTree';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -15,6 +16,7 @@ export function ConversationList({
   onRenamed?: (cid: string, name: string) => void;
 }) {
   const [convs, setConvs] = useState<Conversation[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [trash, setTrash] = useState<Conversation[]>([]);
   const [trashOpen, setTrashOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -134,77 +136,54 @@ export function ConversationList({
     }
   };
 
+  /** SidebarTree 调编辑态用:把 input + 保存/取消按钮塞回原位置 */
+  const renderEditor = (c: Conversation) => (
+    <>
+      <input
+        ref={inputRef}
+        className="input grow"
+        value={draft}
+        maxLength={60}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            void commitEdit(c);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelEdit();
+          }
+        }}
+        onBlur={() => void commitEdit(c)}
+        aria-label="会话名称"
+      />
+      <button className="btn ghost sm" onMouseDown={(e) => e.preventDefault()} onClick={() => void commitEdit(c)}>
+        保存
+      </button>
+      <button className="btn ghost sm" onMouseDown={(e) => e.preventDefault()} onClick={cancelEdit}>
+        取消
+      </button>
+    </>
+  );
+
   return (
     <div>
       {convs.length === 0 && (
         <div className="empty">还没有会话。新建一个会话即开启一个常驻的 Claude Code；进入后可在聊天/终端视图间随时切换。</div>
       )}
-      <div className="list">
-        {convs.map((c) => {
-          const editing = editingId === c.id;
-          return (
-            <div key={c.id} className="row" style={{ cursor: 'default' }}>
-              <span className={`dot ${c.alive ? 'alive' : ''}`} />
-              {editing ? (
-                <input
-                  ref={inputRef}
-                  className="input grow"
-                  value={draft}
-                  maxLength={60}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      void commitEdit(c);
-                    } else if (e.key === 'Escape') {
-                      e.preventDefault();
-                      cancelEdit();
-                    }
-                  }}
-                  onBlur={() => void commitEdit(c)}
-                  aria-label="会话名称"
-                />
-              ) : (
-                <button
-                  className="grow"
-                  style={{ background: 'none', border: 'none', textAlign: 'left', padding: 0 }}
-                  onClick={() => onOpen(c)}
-                >
-                  <div className="name">{c.name}</div>
-                  <div className="sub">{c.alive ? '运行中 · 点按进入' : '已停止 · 点按重启'}</div>
-                </button>
-              )}
-              {editing ? (
-                <>
-                  <button className="btn ghost sm" onMouseDown={(e) => e.preventDefault()} onClick={() => void commitEdit(c)}>
-                    保存
-                  </button>
-                  <button className="btn ghost sm" onMouseDown={(e) => e.preventDefault()} onClick={cancelEdit}>
-                    取消
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    className="btn ghost sm"
-                    title="复制 session UUID(可在别处粘贴接续)"
-                    aria-label="复制 session UUID"
-                    onClick={() => void copySessionId(c)}
-                  >
-                    ⎘
-                  </button>
-                  <button className="btn ghost sm" title="重命名" aria-label="重命名" onClick={() => startEdit(c)}>
-                    ✎
-                  </button>
-                  <button className="btn ghost sm" title="关闭(进垃圾箱可恢复)" onClick={() => void close(c.id)}>
-                    关闭
-                  </button>
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <SidebarTree
+        projectId={project.id}
+        conversations={convs}
+        folders={folders}
+        onFoldersChange={setFolders}
+        onOpen={onOpen}
+        onRefresh={loadActive}
+        onCopySessionId={(c) => void copySessionId(c)}
+        onRequestRename={startEdit}
+        onRequestClose={(c) => void close(c.id)}
+        editingId={editingId}
+        renderEditor={renderEditor}
+      />
 
       <button className="btn primary block" style={{ marginTop: 'var(--sp-5)' }} onClick={create} disabled={busy}>
         ＋ 新建会话
