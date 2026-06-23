@@ -36,8 +36,10 @@ export async function registerProjectRoutes(app: FastifyInstance, ctx: AppContex
     const parse = CreateSchema.safeParse(req.body);
     if (!parse.success) return reply.code(400).send({ error: parse.error.message });
     const user = req.user!;
-    // 普通用户只能建自己的；管理员可用 body.ownerId 指派，缺省也归自己。
-    const ownerId = user.role === 'admin' && parse.data.ownerId ? parse.data.ownerId : user.id;
+    // 普通用户只能建自己 namespace 下的;管理员可用 body.ownerId 指派,缺省也归自己。
+    // namespaceId 主账号 = user.id;子用户 = subUser.id(与父独立)。
+    const ownerId =
+      user.role === 'admin' && parse.data.ownerId ? parse.data.ownerId : user.namespaceId;
     try {
       const project = ctx.projects.add({ ...parse.data, ownerId });
       return { project };

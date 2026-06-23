@@ -29,7 +29,7 @@ export async function registerFolderRoutes(app: FastifyInstance, ctx: AppContext
     if (!project || !canSeeProject(req.user!, project)) {
       return reply.code(404).send({ error: 'project not found' });
     }
-    return { folders: ctx.folders.listByProject(id, req.user!.id) };
+    return { folders: ctx.folders.listByProject(id, req.user!.namespaceId) };
   });
 
   app.post('/api/projects/:id/folders', { preHandler: requireAuth }, async (req, reply) => {
@@ -41,7 +41,7 @@ export async function registerFolderRoutes(app: FastifyInstance, ctx: AppContext
     const parse = NameSchema.safeParse(req.body ?? {});
     if (!parse.success) return reply.code(400).send({ error: 'bad request' });
     try {
-      const folder = ctx.folders.create(id, req.user!.id, parse.data.name);
+      const folder = ctx.folders.create(id, req.user!.namespaceId, parse.data.name);
       return { folder };
     } catch (e) {
       const msg = (e as Error).message;
@@ -57,7 +57,7 @@ export async function registerFolderRoutes(app: FastifyInstance, ctx: AppContext
       return reply.code(404).send({ error: 'project not found' });
     }
     const folder = ctx.folders.get(fid);
-    if (!folder || folder.projectId !== id || folder.ownerId !== req.user!.id) {
+    if (!folder || folder.projectId !== id || folder.ownerId !== req.user!.namespaceId) {
       return reply.code(404).send({ error: 'folder not found' });
     }
     const parse = PatchSchema.safeParse(req.body ?? {});
@@ -84,7 +84,7 @@ export async function registerFolderRoutes(app: FastifyInstance, ctx: AppContext
       return reply.code(404).send({ error: 'project not found' });
     }
     const folder = ctx.folders.get(fid);
-    if (!folder || folder.projectId !== id || folder.ownerId !== req.user!.id) {
+    if (!folder || folder.projectId !== id || folder.ownerId !== req.user!.namespaceId) {
       return reply.code(404).send({ error: 'folder not found' });
     }
     const { reassigned } = ctx.folders.remove(fid);
