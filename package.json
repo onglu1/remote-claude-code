@@ -1,0 +1,16 @@
+{
+  "name": "remote-cc",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/shared", "packages/research-core", "apps/server", "apps/web"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev:server": "npm -w @rcc/server run dev",
+    "dev:web": "npm -w @rcc/web run dev",
+    "build": "npm -w @rcc/web run build",
+    "start": "npm -w @rcc/server run start",
+    "setup-statusline": "npm -w @rcc/server run setup-statusline",
+    "test": "npm -w @rcc/shared run test --if-present && npm -w @rcc/research-core run test --if-present && npm -w @rcc/server run test --if-present",
+    "typecheck": "npm -w @rcc/shared run typecheck && npm -w @rcc/research-core run typecheck && npm -w @rcc/server run typecheck && npm -w @rcc/web run typecheck"
+  }
+}

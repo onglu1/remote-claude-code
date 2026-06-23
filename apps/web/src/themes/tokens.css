@@ -1,0 +1,42 @@
+/* remote-cc 设计 token —— 暖纸张 × 墨色，编辑式极简。无渐变、无毛玻璃。 */
+:root {
+  /* 色板 */
+  --bg: #f3efe6;
+  --surface: #fbf9f3;
+  --surface-sunken: #efeadd;
+  --ink: #211d18;
+  --ink-soft: #4a443b;
+  --muted: #8a8275;
+  --line: #e0d9c9;
+  --line-strong: #cdc4b0;
+  --accent: #a24e34; /* muted clay */
+  --accent-soft: #f0e2da;
+  --ok: #3f6b53;
+  --warn: #b9863a;
+  --danger: #9c3b34;
+
+  /* 终端配色（墨色背景，暖灰前景） */
+  --term-bg: #211d18;
+  --term-fg: #e8e1d3;
+
+  /* 字体：不依赖外部 webfont，移动端可靠；以衬线标题取性格 */
+  --font-sans: ui-sans-serif, -apple-system, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  --font-serif: "Songti SC", "Source Han Serif SC", Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+
+  /* 间距与圆角 */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 1px 0 var(--line-strong);
+
+  /* 安全区（刘海屏） */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}

@@ -1,0 +1,33 @@
+node_modules/
+dist/
+.env
+.env.local
+*.bak
+*.rcc-bak
+*.log
+.DS_Store
+*.tsbuildinfo
+.vite/
+coverage/
+.idea/
+.vscode/
+*.swp
+*.swo
+# statusLine 捕获器 sidecar 目录（默认在 ~/.claude/ 外部；若用户改到仓库内则忽略）
+rcc-statusline/
+config/conversations.json
+config/projects.json
+config/users.json
+data/
+# 开发用 git worktree（隔离工作区，不进库）
+.worktrees/
+logs/
+
+# 本机部署/启动脚本：每台机器都不一样（端口、tmux 名、cron、HUD 注入、隧道...）
+# 仓库只发 start.example.sh 模板；用户复制为 start.sh 再按本机情况改
+start.sh
+start-dev.sh
+
+# 部署/公网暴露脚本（Cloudflare/Tailscale/frp/nginx/cron 健康检查...）
+# 标准 fullstack OSS 项目不内置部署方案；用户在本机 deploy/ 自行管理
+deploy/

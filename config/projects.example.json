@@ -1,0 +1,16 @@
+[
+  {
+    "id": "example-dev",
+    "name": "Example Dev",
+    "path": "/path/to/your/dev-project",
+    "type": "dev",
+    "launchCommand": "Fable-yolo"
+  },
+  {
+    "id": "example-research",
+    "name": "Example Research",
+    "path": "/path/to/your/research-project",
+    "type": "research",
+    "launchCommand": "Fable-yolo"
+  }
+]
