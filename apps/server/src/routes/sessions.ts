@@ -45,14 +45,19 @@ const BatchSchema = z.object({
 export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
   const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users, ctx.subUsers);
 
-  // 会话存活判定：tmux 命中其 tmuxName，或注册表里仍活跃。
-  async function aliveOf(conv: { id: string; tmuxName: string }): Promise<boolean> {
-    const alive = new Set(await ctx.tmux.listSessions());
+  // 会话存活判定:按 unixUser 路由到对应 socket(子用户和父共用一个 socket,主账号自己)。
+  // 多用户隔离设计 2026-06-23:不再用 ctx.tmux 单例(那是 ServiceUser=wangleyan 的),
+  // 否则跨 unix 用户的会话永远判 dead。
+  async function aliveOf(
+    unixUser: string,
+    conv: { id: string; tmuxName: string },
+  ): Promise<boolean> {
+    const alive = new Set(await ctx.getTmux(unixUser).listSessions());
     return alive.has(conv.tmuxName) || ctx.registry.isActive(conv.id);
   }
 
-  async function withAlive(projectId: string): Promise<Conversation[]> {
-    const alive = new Set(await ctx.tmux.listSessions());
+  async function withAlive(projectId: string, unixUser: string): Promise<Conversation[]> {
+    const alive = new Set(await ctx.getTmux(unixUser).listSessions());
     return ctx.conversations.listByProject(projectId).map((c) => ({
       ...c,
       alive: alive.has(c.tmuxName) || ctx.registry.isActive(c.id),
@@ -69,7 +74,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       if (!project || !canSeeProject(req.user!, project)) {
         return reply.code(404).send({ error: 'project not found' });
       }
-      return { conversations: await withAlive(id) };
+      return { conversations: await withAlive(id, req.user!.unixUser) };
     },
   );
 
@@ -150,7 +155,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
         return reply.code(409).send({ error: 'starred_locked' });
       }
       // tmux 一定杀(无论软/硬):软删时如果 TUI 还活着,留着也没意义且占资源。
-      await ctx.tmux.killSession(conv.tmuxName);
+      await ctx.getTmux(req.user!.unixUser).killSession(conv.tmuxName);
       if (hard) {
         ctx.conversations.hardDelete(cid);
       } else {
@@ -188,7 +193,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       }
       const updated = ctx.conversations.update(cid, parse.data);
       if (!updated) return reply.code(404).send({ error: 'conversation not found' });
-      return { conversation: { ...updated, alive: await aliveOf(updated) } };
+      return { conversation: { ...updated, alive: await aliveOf(req.user!.unixUser, updated) } };
     },
   );
 
@@ -209,7 +214,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
         return reply.code(404).send({ error: 'conversation not found' });
       }
       if (conv.closedAt) return { conversation: { ...conv, alive: false } };
-      await ctx.tmux.killSession(conv.tmuxName);
+      await ctx.getTmux(req.user!.unixUser).killSession(conv.tmuxName);
       ctx.chatRegistry.forceClose(cid);
       const updated = ctx.conversations.update(cid, { closedAt: new Date().toISOString() });
       return { conversation: { ...updated, alive: false } };
@@ -231,7 +236,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       if (!conv || conv.projectId !== id) {
         return reply.code(404).send({ error: 'conversation not found' });
       }
-      if (!conv.closedAt) return { conversation: { ...conv, alive: await aliveOf(conv) } };
+      if (!conv.closedAt) return { conversation: { ...conv, alive: await aliveOf(req.user!.unixUser, conv) } };
       const cmd = buildClaudeCmd({
         launchCommand: project.launchCommand,
         sessionId: conv.sessionId,
@@ -240,7 +245,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
         askLaunch: ctx.askLaunch,
       });
       try {
-        await ctx.tmux.newDetached(conv.tmuxName, project.path, cmd, 120, 40);
+        await ctx.getTmux(req.user!.unixUser).newDetached(conv.tmuxName, project.path, cmd, 120, 40);
       } catch (e) {
         return reply.code(500).send({ error: `resume failed: ${(e as Error).message}` });
       }
@@ -288,7 +293,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
             ctx.conversations.update(cid, { starred: false });
           } else if (action === 'close') {
             if (!conv.closedAt) {
-              await ctx.tmux.killSession(conv.tmuxName);
+              await ctx.getTmux(req.user!.unixUser).killSession(conv.tmuxName);
               ctx.chatRegistry.forceClose(cid);
               ctx.conversations.update(cid, { closedAt: new Date().toISOString() });
             }
@@ -297,7 +302,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
               failed.push({ id: cid, reason: 'starred_locked' });
               continue;
             }
-            await ctx.tmux.killSession(conv.tmuxName);
+            await ctx.getTmux(req.user!.unixUser).killSession(conv.tmuxName);
             ctx.chatRegistry.forceClose(cid);
             ctx.conversations.softDelete(cid);
           }
@@ -329,7 +334,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       const before = q.before && /^\d+$/.test(q.before) ? parseInt(q.before, 10) : null;
       const limit = Math.min(Math.max(parseInt(q.limit ?? '800', 10) || 800, 1), 5000);
 
-      const info = await ctx.tmux.historyInfo(conv.tmuxName);
+      const info = await ctx.getTmux(req.user!.unixUser).historyInfo(conv.tmuxName);
       if (!info) return { lines: [], nextBefore: 0, atTop: true };
 
       const w = computeWindow({
@@ -340,7 +345,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       });
       if (w.empty) return { lines: [], nextBefore: w.nextBefore, atTop: w.atTop };
 
-      const raw = await ctx.tmux.captureRange(conv.tmuxName, w.startLine, w.endLine);
+      const raw = await ctx.getTmux(req.user!.unixUser).captureRange(conv.tmuxName, w.startLine, w.endLine);
       // 空窗(空白屏/抓取失败)直接给空数组，避免 ''.split 产生一个伪空行。
       const lines = raw === '' ? [] : raw.replace(/\n$/, '').split('\n').map((l) => l.replace(/[ \t]+$/, ''));
       return { lines, nextBefore: w.nextBefore, atTop: w.atTop };
@@ -392,7 +397,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       // 杀 tmux session = 同时杀 claude(pane 主进程就是它)。等 100ms 让 tmux server 清干净 entry,
       // 否则紧接着的 new-session 同名会撞。
       try {
-        await ctx.tmux.killSession(conv.tmuxName);
+        await ctx.getTmux(req.user!.unixUser).killSession(conv.tmuxName);
       } catch {
         /* 已不在:正好,直接拉新的 */
       }
@@ -408,7 +413,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
         askLaunch: ctx.askLaunch,
       });
       try {
-        await ctx.tmux.newDetached(conv.tmuxName, project.path, cmd, cols, rows);
+        await ctx.getTmux(req.user!.unixUser).newDetached(conv.tmuxName, project.path, cmd, cols, rows);
       } catch (e) {
         return reply.code(500).send({ error: `重启 claude 失败: ${(e as Error).message}` });
       }

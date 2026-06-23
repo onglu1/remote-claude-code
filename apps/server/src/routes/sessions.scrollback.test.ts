@@ -55,8 +55,10 @@ beforeAll(async () => {
     PROJECTS_CONFIG: path.join(tmpDir, 'projects.json'),
   } as NodeJS.ProcessEnv);
   const ctx = await buildContext(config);
-  // 用注入 fake exec 的 Tmux 顶替真实 tmux（scrollback 路由只读 ctx.tmux）。
-  ctx.tmux = new Tmux('rcc', (f, a) => fakeExec(f, a));
+  // 用注入 fake exec 的 Tmux 顶替真实 tmux:scrollback 路由通过 getTmux(unixUser) 取实例。
+  const fakeTmux = new Tmux('rcc', (f, a) => fakeExec(f, a));
+  ctx.tmux = fakeTmux;
+  ctx.getTmux = () => fakeTmux;
   app = await buildApp(config, { context: ctx, serveStatic: false });
 });
 
