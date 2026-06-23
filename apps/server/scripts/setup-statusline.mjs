@@ -21,11 +21,14 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, 'rcc-statusline.mjs');
+// 仓库根：本文件在 apps/server/scripts/,向上三级
+const REPO_ROOT = join(HERE, '../../..');
 const SETTINGS = join(homedir(), '.claude', 'settings.json');
 const BAK = `${SETTINGS}.rcc-bak`;
 
 function statuslineDir() {
-  return process.env.RCC_STATUSLINE_DIR || join(homedir(), '.claude', 'rcc-statusline');
+  // 跟 apps/server/src/config.ts 默认值保持一致:留空=<repoRoot>/data/rcc-statusline
+  return process.env.RCC_STATUSLINE_DIR || join(REPO_ROOT, 'data', 'rcc-statusline');
 }
 
 /** 我们注入的 command（绝对路径，带 RCC_STATUSLINE_DIR 前缀，保证子进程拿到同一目录）。 */
