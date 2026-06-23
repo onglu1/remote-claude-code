@@ -10,6 +10,7 @@ import type {
   MetricsSnapshot,
   ScrollbackChunk,
   Folder,
+  SubUser,
 } from '@rcc/shared';
 
 export interface FileContent {
@@ -60,11 +61,38 @@ export const api = {
 
   // 用户管理（仅管理员可成功调用）。
   adminListUsers: () => req<{ users: AuthUser[] }>('GET', '/api/admin/users'),
-  adminAddUser: (u: { username: string; password: string; role: Role }) =>
+  adminAddUser: (u: { username: string; password: string; role: Role; unixUser?: string }) =>
     req<{ user: AuthUser }>('POST', '/api/admin/users', u),
   adminSetPassword: (id: string, password: string) =>
     req<{ user: AuthUser }>('PATCH', `/api/admin/users/${id}`, { password }),
+  adminSetUnixUser: (id: string, unixUser: string) =>
+    req<{ user: AuthUser }>('PATCH', `/api/admin/users/${id}`, { unixUser }),
   adminDeleteUser: (id: string) => req<{ ok: true }>('DELETE', `/api/admin/users/${id}`),
+
+  // ---- 子用户(多用户隔离设计 2026-06-23) ----
+  /** admin 看全部,非 admin 主账号看自己父下的;子用户登录 GET 直接 403。 */
+  adminListSubUsers: () =>
+    req<{ subusers: Omit<SubUser, 'passwordHash'>[] }>('GET', '/api/admin/subusers'),
+  adminAddSubUser: (s: {
+    parentId: string;
+    username: string;
+    password: string;
+    displayName: string;
+  }) => req<{ subuser: Omit<SubUser, 'passwordHash'> }>('POST', '/api/admin/subusers', s),
+  adminSetSubUserPassword: (id: string, password: string) =>
+    req<{ subuser: Omit<SubUser, 'passwordHash'> }>('PATCH', `/api/admin/subusers/${id}`, {
+      password,
+    }),
+  adminRenameSubUser: (id: string, displayName: string) =>
+    req<{ subuser: Omit<SubUser, 'passwordHash'> }>('PATCH', `/api/admin/subusers/${id}`, {
+      displayName,
+    }),
+  adminDeleteSubUser: (id: string) =>
+    req<{ ok: true }>('DELETE', `/api/admin/subusers/${id}`),
+
+  /** 自助改自己口令(主账号或子用户都走这条)。 */
+  changeMyPassword: (oldPassword: string, newPassword: string) =>
+    req<{ ok: true }>('PATCH', '/api/me/password', { oldPassword, newPassword }),
 
   /** 服务器全局资源快照（GPU/CPU/内存/磁盘）；任意登录用户可见。 */
   getMetrics: () => req<{ metrics: MetricsSnapshot }>('GET', '/api/metrics'),
