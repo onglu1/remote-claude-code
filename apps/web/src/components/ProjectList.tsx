@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Project, AuthUser } from '@rcc/shared';
 import { api } from '../lib/api';
 import { DirPicker } from './DirPicker';
+import { SettingsPanel } from './SettingsPanel';
 
 export function ProjectList({
   user,
@@ -18,6 +19,7 @@ export function ProjectList({
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [adding, setAdding] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   // admin 视图把 ownerId 映射成用户名，给每行加 owner 标签。
   const [ownerNames, setOwnerNames] = useState<Record<string, string>>({});
 
@@ -47,6 +49,14 @@ export function ProjectList({
             用户
           </button>
         )}
+        <button
+          className="btn ghost sm"
+          onClick={() => setShowSettings(true)}
+          title="设置"
+          aria-label="打开设置"
+        >
+          ⚙
+        </button>
         <button className="btn ghost sm" onClick={onLock}>
           退出
         </button>
@@ -89,6 +99,7 @@ export function ProjectList({
           </button>
         )}
       </div>
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
     </div>
   );
 }

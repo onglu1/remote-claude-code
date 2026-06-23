@@ -1922,3 +1922,25 @@ select.input {
   font-family: inherit; font-size: 13px;
 }
 .ctx-input:focus { outline: none; border-color: var(--accent); }
+
+/* ---- 设置面板(SettingsPanel) ---- */
+.settings-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  background: rgba(33, 29, 24, 0.32);
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--sp-4);
+}
+.settings-panel {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  width: min(420px, 100%);
+  padding: var(--sp-5);
+  box-shadow: 0 16px 48px rgba(33, 29, 24, 0.24);
+}
+.settings-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: var(--sp-4);
+}
+.settings-header h3 { font-size: 18px; margin: 0; }
+.settings-body { display: flex; flex-direction: column; gap: var(--sp-2); }
