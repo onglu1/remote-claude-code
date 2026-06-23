@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Project, Conversation, Folder } from '@rcc/shared';
 import { api } from '../lib/api';
 import { SidebarTree } from './SidebarTree';
+import { MultiSelectToolbar } from './MultiSelectToolbar';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -22,6 +23,7 @@ export function ConversationList({
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const inputRef = useRef<HTMLInputElement>(null);
 
   const loadActive = () =>
@@ -166,11 +168,56 @@ export function ConversationList({
     </>
   );
 
+  const toggleSelect = (cid: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(cid)) next.delete(cid);
+      else next.add(cid);
+      return next;
+    });
+  };
+
+  const clearSelect = () => setSelected(new Set());
+
+  async function runBatch(
+    action: 'move' | 'star' | 'unstar' | 'close' | 'softDelete',
+    payload?: { folderId: string | null },
+  ) {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    const r = await api
+      .batchConversations(project.id, { ids, action, payload })
+      .catch(() => null);
+    if (!r) {
+      window.alert('批量操作失败,请重试');
+      return;
+    }
+    if (r.failed.length > 0) {
+      // 把 failed 汇总成一条文案(主要场景:starred_locked 删除拒)
+      window.alert(
+        `${r.succeeded.length} 条成功;${r.failed.length} 条失败:\n` +
+          r.failed.map((f) => `· ${f.id.slice(0, 8)}: ${f.reason}`).join('\n'),
+      );
+    }
+    clearSelect();
+    await loadAll();
+  }
+
   return (
     <div>
       {convs.length === 0 && (
         <div className="empty">还没有会话。新建一个会话即开启一个常驻的 Claude Code；进入后可在聊天/终端视图间随时切换。</div>
       )}
+      <MultiSelectToolbar
+        selectedIds={Array.from(selected)}
+        folders={folders}
+        onMove={(folderId) => void runBatch('move', { folderId })}
+        onStar={() => void runBatch('star')}
+        onUnstar={() => void runBatch('unstar')}
+        onClose={() => void runBatch('close')}
+        onDelete={() => void runBatch('softDelete')}
+        onCancel={clearSelect}
+      />
       <SidebarTree
         projectId={project.id}
         conversations={convs}
@@ -200,6 +247,8 @@ export function ConversationList({
         onRequestClose={(c) => void close(c.id)}
         editingId={editingId}
         renderEditor={renderEditor}
+        selectedIds={selected}
+        onToggleSelect={toggleSelect}
       />
 
       <button className="btn primary block" style={{ marginTop: 'var(--sp-5)' }} onClick={create} disabled={busy}>

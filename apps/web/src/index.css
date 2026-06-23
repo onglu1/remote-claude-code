@@ -1957,3 +1957,25 @@ select.input {
 }
 .sidebar-drag-handle:active { cursor: grabbing; background: var(--accent); }
 .sidebar-drag-body { flex: 1; min-width: 0; }
+
+/* ---- 多选工具栏(MultiSelectToolbar) ---- */
+.multi-toolbar {
+  position: sticky; top: calc(var(--safe-top) + 56px); z-index: 5;
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  margin-bottom: var(--sp-3);
+  flex-wrap: wrap;
+}
+.multi-toolbar .multi-count {
+  color: var(--accent); font-weight: 600; font-size: 13px;
+  white-space: nowrap;
+}
+.multi-toolbar select { padding: 4px 8px; font-size: 13px; }
+.sidebar-select { width: 16px; height: 16px; flex: none; cursor: pointer; }
+.sidebar-item.selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}

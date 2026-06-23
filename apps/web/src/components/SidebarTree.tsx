@@ -100,6 +100,9 @@ export interface SidebarTreeProps {
   editingId?: string | null;
   /** 渲染编辑器:把整个 input + 保存/取消按钮交给父,SidebarTree 只挪位置 */
   renderEditor?: (conv: Conversation) => React.ReactNode;
+  /** 多选状态(可选):非空时点条目=toggle,空时=onOpen;cmd/ctrl 始终 toggle */
+  selectedIds?: Set<string>;
+  onToggleSelect?: (cid: string) => void;
 }
 
 /** 把每个会话条目包成 draggable。拖动靠 dot 当 handle,中间按钮区域照常可点。 */
@@ -155,7 +158,10 @@ export function SidebarTree(props: SidebarTreeProps) {
     onRequestClose,
     editingId,
     renderEditor,
+    selectedIds,
+    onToggleSelect,
   } = props;
+  const multiActive = (selectedIds?.size ?? 0) > 0;
 
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   // 桌面端启拖拽,触摸端不启;一次检测即可,屏幕变化罕见
@@ -234,9 +240,37 @@ export function SidebarTree(props: SidebarTreeProps) {
             {items.map((c) => {
               const cls = conversationStatus(c);
               const editing = editingId === c.id;
+              const isSelected = selectedIds?.has(c.id) ?? false;
+              // 点条目主区域:
+              //  - cmd/ctrl 始终 toggle 选中(支持回调时)
+              //  - 已有选中态(multiActive) → toggle
+              //  - 无选中态 → 进入会话
+              const onItemMainClick = (e: React.MouseEvent) => {
+                if (onToggleSelect && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  onToggleSelect(c.id);
+                  return;
+                }
+                if (multiActive && onToggleSelect) {
+                  onToggleSelect(c.id);
+                  return;
+                }
+                onOpen(c);
+              };
               const liNode = (
-                <li className={`sidebar-item ${cls}`}>
-                  <span className={`dot ${cls}`} aria-label={cls} />
+                <li className={`sidebar-item ${cls} ${isSelected ? 'selected' : ''}`}>
+                  {multiActive && onToggleSelect ? (
+                    <input
+                      type="checkbox"
+                      className="sidebar-select"
+                      checked={isSelected}
+                      onChange={() => onToggleSelect(c.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label="选中此会话"
+                    />
+                  ) : (
+                    <span className={`dot ${cls}`} aria-label={cls} />
+                  )}
                   {c.starred && <span className="star" aria-label="加星">★</span>}
                   {editing && renderEditor ? (
                     <div className="sidebar-edit grow">{renderEditor(c)}</div>
@@ -244,7 +278,7 @@ export function SidebarTree(props: SidebarTreeProps) {
                     <button
                       type="button"
                       className="sidebar-item-open grow"
-                      onClick={() => onOpen(c)}
+                      onClick={onItemMainClick}
                     >
                       <div className="name">{c.name}</div>
                       <div className="sub">
