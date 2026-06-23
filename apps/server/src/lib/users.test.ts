@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { UserStore } from './users';
+import { SubUserStore } from './subUsers';
 
 let dir: string;
 let file: string;
@@ -72,6 +73,57 @@ describe('UserStore', () => {
     s.add({ username: 'a', passwordHash: 'h', role: 'user' });
     s.add({ username: 'b', passwordHash: 'h', role: 'user' });
     expect(fs.existsSync(`${file}.bak`)).toBe(true);
+  });
+});
+
+describe('UserStore.migrate(fallbackUnixUser)', () => {
+  it('给缺 unixUser 的存量回填', () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify([
+        { id: 'u1', username: 'alice', passwordHash: 'h', role: 'admin', createdAt: '2026-01-01' },
+      ]),
+    );
+    const s = new UserStore(file);
+    s.migrate('wangleyan');
+    expect(s.get('u1')?.unixUser).toBe('wangleyan');
+  });
+
+  it('幂等:已有 unixUser 不动', () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify([
+        {
+          id: 'u1', username: 'alice', passwordHash: 'h', role: 'admin',
+          createdAt: '2026-01-01', unixUser: 'alice',
+        },
+      ]),
+    );
+    const s = new UserStore(file);
+    s.migrate('wangleyan');
+    expect(s.get('u1')?.unixUser).toBe('alice');
+  });
+});
+
+describe('全局 username 唯一(主账号/子用户互查)', () => {
+  it('UserStore.add 拒绝与子用户重名', () => {
+    const subFile = path.join(dir, 'subusers.json');
+    const subs = new SubUserStore(subFile);
+    subs.add({ parentId: 'u1', username: 'taken', passwordHash: 'h', displayName: 'd' });
+    const users = new UserStore(file, subs);
+    expect(() =>
+      users.add({ username: 'taken', passwordHash: 'h', role: 'user' }),
+    ).toThrow(/已存在/);
+  });
+
+  it('SubUserStore.add 拒绝与主账号重名', () => {
+    const users = new UserStore(file);
+    users.add({ username: 'taken', passwordHash: 'h', role: 'user' });
+    const subFile = path.join(dir, 'subusers.json');
+    const subs = new SubUserStore(subFile, users);
+    expect(() =>
+      subs.add({ parentId: 'u1', username: 'taken', passwordHash: 'h', displayName: 'd' }),
+    ).toThrow(/已存在/);
   });
 });
 
