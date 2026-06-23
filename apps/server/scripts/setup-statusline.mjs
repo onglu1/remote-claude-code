@@ -71,17 +71,21 @@ function isOurCommand(cmd) {
 
 function install() {
   const dir = statuslineDir();
+  const desired = ourCommand(dir);
   const settings = readSettings();
   const current = settings.statusLine;
   const currentCmd = current && typeof current === 'object' ? current.command : undefined;
 
-  // 幂等：已是我们的命令 → 只确保 downstream.sh 在（用户改过原 statusLine 时不覆盖已存的）。
+  // 幂等：完全一致 → no-op；是我们的但 dir 漂移过(升级了默认/换了 env)→ 原地刷新,不当作首装。
   if (isOurCommand(currentCmd)) {
-    if (!existsSync(join(dir, 'downstream.sh'))) {
-      console.log('[setup] statusLine 已指向 rcc 脚本，但缺 downstream.sh；保持无下游（自渲染兜底）。');
-    } else {
-      console.log('[setup] 已安装（幂等 no-op）。');
+    if (currentCmd === desired) {
+      console.log('[setup] 已安装(幂等 no-op)。');
+      return;
     }
+    settings.statusLine = { type: 'command', command: desired };
+    writeJson(SETTINGS, settings);
+    console.log(`[setup] 已就地刷新 statusLine 路径 → ${desired}`);
+    console.log('[setup] (downstream.sh 不动;旧 sidecar dir 留着无害,如需可手动 rm。)');
     return;
   }
 
@@ -99,9 +103,9 @@ function install() {
     console.log('[setup] 未发现现有 statusLine 命令；无下游（自渲染一行兜底）。');
   }
 
-  settings.statusLine = { type: 'command', command: ourCommand(dir) };
+  settings.statusLine = { type: 'command', command: desired };
   writeJson(SETTINGS, settings);
-  console.log(`[setup] 已写入 statusLine → ${ourCommand(dir)}`);
+  console.log(`[setup] 已写入 statusLine → ${desired}`);
   console.log('[setup] 完成。重启正在运行的 claude 会话或等其下次刷新状态栏即生效。');
 }
 
