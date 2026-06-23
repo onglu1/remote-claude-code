@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import os from 'node:os';
+import { makeRunAs, type RunAsFn } from './runAs';
 
 const pexec = promisify(execFile);
 
@@ -13,14 +15,51 @@ const realExec: ExecFn = (file, args) => pexec(file, args);
 const SESSION_PREFIX = 'rcc-';
 
 /**
- * 对 `tmux -L <socket>` 的薄封装。命令拼装是纯函数，便于测试；
- * 真正执行通过可注入的 ExecFn。
+ * Tmux 构造选项(对象式)。多用户隔离场景必填 unixUser:决定 socket 走法 +
+ * 命令通过 sudo -nH -u 切到目标 uid。
+ */
+export interface TmuxOptions {
+  socket: string;
+  unixUser?: string;
+  exec?: ExecFn;
+  /** 服务进程的 unix 用户名;默认 os.userInfo().username。 */
+  currentUser?: string;
+}
+
+/**
+ * 对 `tmux -L <socket>` 的薄封装。命令拼装是纯函数,便于测试;
+ * 真正执行通过可注入的 ExecFn,并由 runAs 决定是否前缀 sudo。
+ *
+ * 兼容三种构造签名:
+ *   new Tmux('rcc')                       // 老:socket only,默认 currentUser
+ *   new Tmux('rcc', execFn)               // 老:socket + custom exec
+ *   new Tmux({ socket, unixUser, exec })  // 新:对象式,可指定目标 unixUser
  */
 export class Tmux {
-  constructor(
-    private readonly socket: string,
-    private readonly exec: ExecFn = realExec,
-  ) {}
+  private readonly socket: string;
+  private readonly unixUser: string;
+  private readonly runAs: RunAsFn;
+
+  constructor(opts: string | TmuxOptions, execLegacy?: ExecFn) {
+    let socket: string;
+    let unixUser: string;
+    let exec: ExecFn;
+    let currentUser: string;
+    if (typeof opts === 'string') {
+      socket = opts;
+      currentUser = os.userInfo().username;
+      unixUser = currentUser;
+      exec = execLegacy ?? realExec;
+    } else {
+      socket = opts.socket;
+      currentUser = opts.currentUser ?? os.userInfo().username;
+      unixUser = opts.unixUser ?? currentUser;
+      exec = opts.exec ?? realExec;
+    }
+    this.socket = socket;
+    this.unixUser = unixUser;
+    this.runAs = makeRunAs({ exec, currentUser });
+  }
 
   /** 会话名：rcc-<projectId>-<convId> */
   static sessionName(projectId: string, convId: string): string {
@@ -76,12 +115,12 @@ export class Tmux {
   }
 
   async newDetached(name: string, cwd: string, command: string, cols: number, rows: number): Promise<void> {
-    await this.exec('tmux', this.newDetachedArgs(name, cwd, command, cols, rows));
+    await this.runAs(this.unixUser, 'tmux', this.newDetachedArgs(name, cwd, command, cols, rows));
   }
 
   /** 发送命名键（如 ['Enter']、['Escape']、['C-c']、['Up']）到会话当前 pane。 */
   async sendKeys(name: string, keys: string[]): Promise<void> {
-    await this.exec('tmux', [...this.base(), 'send-keys', '-t', name, ...keys]);
+    await this.runAs(this.unixUser, 'tmux', [...this.base(), 'send-keys', '-t', name, ...keys]);
   }
 
   /**
@@ -89,7 +128,7 @@ export class Tmux {
    * 区别于 sendKeys 的「按键名」语义——`-l` 确保 "3" 被当作字符 3、而非键名查找。
    */
   async sendLiteralKeys(name: string, text: string): Promise<void> {
-    await this.exec('tmux', [...this.base(), 'send-keys', '-t', name, '-l', text]);
+    await this.runAs(this.unixUser, 'tmux', [...this.base(), 'send-keys', '-t', name, '-l', text]);
   }
 
   /**
@@ -99,16 +138,16 @@ export class Tmux {
    *   适合发"多行用户消息"(文本+图片路径)——否则每个 \n 就是一次 Enter,被拆成 N 条消息。
    */
   async pasteText(name: string, text: string, bracketed = false): Promise<void> {
-    await this.exec('tmux', [...this.base(), 'set-buffer', '-b', 'rcc-paste', '--', text]);
+    await this.runAs(this.unixUser, 'tmux', [...this.base(), 'set-buffer', '-b', 'rcc-paste', '--', text]);
     const pasteArgs = bracketed
       ? [...this.base(), 'paste-buffer', '-d', '-p', '-b', 'rcc-paste', '-t', name]
       : [...this.base(), 'paste-buffer', '-d', '-b', 'rcc-paste', '-t', name];
-    await this.exec('tmux', pasteArgs);
+    await this.runAs(this.unixUser, 'tmux', pasteArgs);
   }
 
   async isAvailable(): Promise<boolean> {
     try {
-      await this.exec('tmux', ['-V']);
+      await this.runAs(this.unixUser, 'tmux', ['-V']);
       return true;
     } catch {
       return false;
@@ -118,7 +157,7 @@ export class Tmux {
   /** 列出本 socket 下以 rcc- 开头的会话名。 */
   async listSessions(): Promise<string[]> {
     try {
-      const { stdout } = await this.exec('tmux', [
+      const { stdout } = await this.runAs(this.unixUser, 'tmux', [
         ...this.base(),
         'list-sessions',
         '-F',
@@ -140,7 +179,7 @@ export class Tmux {
 
   async killSession(name: string): Promise<void> {
     try {
-      await this.exec('tmux', [...this.base(), 'kill-session', '-t', name]);
+      await this.runAs(this.unixUser, 'tmux', [...this.base(), 'kill-session', '-t', name]);
     } catch {
       /* 已不存在则忽略 */
     }
@@ -163,7 +202,7 @@ export class Tmux {
    */
   async clearHistory(name: string): Promise<void> {
     try {
-      await this.exec('tmux', this.clearHistoryArgs(name));
+      await this.runAs(this.unixUser, 'tmux', this.clearHistoryArgs(name));
     } catch {
       /* 会话不存在/无 pane:忽略 */
     }
@@ -176,7 +215,7 @@ export class Tmux {
    */
   async resizeWindow(name: string, cols: number, rows: number): Promise<void> {
     try {
-      await this.exec('tmux', this.resizeWindowArgs(name, cols, rows));
+      await this.runAs(this.unixUser, 'tmux', this.resizeWindowArgs(name, cols, rows));
     } catch {
       /* 旧版无此命令;调用方可发 Ctrl-L 兜底 */
     }
@@ -185,7 +224,7 @@ export class Tmux {
   /** 抓取当前可见屏（不含滚动历史），用于聊天模式的流式预览读屏。 */
   async capturePaneVisible(name: string): Promise<string> {
     try {
-      const { stdout } = await this.exec('tmux', [
+      const { stdout } = await this.runAs(this.unixUser, 'tmux', [
         ...this.base(),
         'capture-pane',
         '-p',
@@ -201,7 +240,7 @@ export class Tmux {
   /** 抓取窗格最近 N 行（含历史），用于重连时回放。 */
   async capturePane(name: string, lines = 2000): Promise<string> {
     try {
-      const { stdout } = await this.exec('tmux', [
+      const { stdout } = await this.runAs(this.unixUser, 'tmux', [
         ...this.base(),
         'capture-pane',
         '-p',
@@ -228,7 +267,7 @@ export class Tmux {
 
   async panePid(name: string): Promise<number | null> {
     try {
-      const { stdout } = await this.exec('tmux', this.panePidArgs(name));
+      const { stdout } = await this.runAs(this.unixUser, 'tmux', this.panePidArgs(name));
       const pid = parseInt(stdout.trim(), 10);
       return Number.isFinite(pid) && pid > 1 ? pid : null;
     } catch {
@@ -238,7 +277,7 @@ export class Tmux {
 
   async historyInfo(name: string): Promise<{ historySize: number; paneHeight: number } | null> {
     try {
-      const { stdout } = await this.exec('tmux', this.historyInfoArgs(name));
+      const { stdout } = await this.runAs(this.unixUser, 'tmux', this.historyInfoArgs(name));
       const [h, p] = stdout.trim().split(/\s+/).map((n) => parseInt(n, 10));
       if (!Number.isFinite(h) || !Number.isFinite(p)) return null;
       return { historySize: h, paneHeight: p };
@@ -254,7 +293,7 @@ export class Tmux {
 
   async captureRange(name: string, start: number, end: number): Promise<string> {
     try {
-      const { stdout } = await this.exec('tmux', this.captureRangeArgs(name, start, end));
+      const { stdout } = await this.runAs(this.unixUser, 'tmux', this.captureRangeArgs(name, start, end));
       return stdout;
     } catch {
       return '';

@@ -170,4 +170,31 @@ describe('Tmux', () => {
     await t.pasteText('rcc-p-c', 'hello');
     expect(calls[1]).not.toContain('-p');
   });
+
+  it('对象式签名:绑定 unixUser → 跨用户调用走 sudo -n -H -u', async () => {
+    const exec = vi.fn(async () => ({ stdout: '', stderr: '' }));
+    const t = new Tmux({
+      socket: 'rcc-zhangsan',
+      unixUser: 'zhangsan',
+      exec,
+      currentUser: 'wangleyan',
+    });
+    await t.killSession('rcc-foo');
+    expect(exec).toHaveBeenCalledWith('sudo', [
+      '-n', '-H', '-u', 'zhangsan', '--',
+      'tmux', '-L', 'rcc-zhangsan', 'kill-session', '-t', 'rcc-foo',
+    ]);
+  });
+
+  it('对象式签名:目标 = ServiceUser → 零开销路径直 exec', async () => {
+    const exec = vi.fn(async () => ({ stdout: '', stderr: '' }));
+    const t = new Tmux({
+      socket: 'rcc',
+      unixUser: 'wangleyan',
+      exec,
+      currentUser: 'wangleyan',
+    });
+    await t.killSession('rcc-foo');
+    expect(exec).toHaveBeenCalledWith('tmux', ['-L', 'rcc', 'kill-session', '-t', 'rcc-foo']);
+  });
 });
