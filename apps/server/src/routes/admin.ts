@@ -82,4 +82,89 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: AppContext)
     ctx.users.remove(id);
     return { ok: true };
   });
+
+  // ---- 子用户 CRUD(多用户隔离设计 2026-06-23) ----
+  // 子用户登录不能管子用户(防递归);主账号 user 只能管自己父下的;admin 看全部。
+  const SubCreateSchema = z.object({
+    parentId: z.string().min(1),
+    username: z.string().min(1),
+    password: z.string().min(1),
+    displayName: z.string().trim().min(1).max(40),
+  });
+  const SubPatchSchema = z.object({
+    password: z.string().min(1).optional(),
+    displayName: z.string().trim().min(1).max(40).optional(),
+  });
+
+  const subAuth = { preHandler: requireAuth };
+
+  app.get('/api/admin/subusers', subAuth, async (req, reply) => {
+    const u = req.user!;
+    if (u.kind === 'subuser') return reply.code(403).send({ error: 'forbidden' });
+    const all = ctx.subUsers.load().map(({ passwordHash: _ph, ...rest }) => rest);
+    if (u.role === 'admin') return { subusers: all };
+    return { subusers: all.filter((s) => s.parentId === u.id) };
+  });
+
+  app.post('/api/admin/subusers', subAuth, async (req, reply) => {
+    const u = req.user!;
+    if (u.kind === 'subuser') return reply.code(403).send({ error: 'forbidden' });
+    const parse = SubCreateSchema.safeParse(req.body);
+    if (!parse.success) return reply.code(400).send({ error: parse.error.message });
+    // 非 admin 只能给自己当父
+    if (u.role !== 'admin' && parse.data.parentId !== u.id) {
+      return reply.code(403).send({ error: 'forbidden_parent' });
+    }
+    const parent = ctx.users.get(parse.data.parentId);
+    if (!parent) return reply.code(400).send({ error: 'parent_not_found' });
+    try {
+      const hash = await argon2.hash(parse.data.password);
+      const sub = ctx.subUsers.add({
+        parentId: parse.data.parentId,
+        username: parse.data.username,
+        passwordHash: hash,
+        displayName: parse.data.displayName,
+      });
+      const { passwordHash: _ph, ...rest } = sub;
+      return { subuser: rest };
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+  });
+
+  app.patch('/api/admin/subusers/:id', subAuth, async (req, reply) => {
+    const u = req.user!;
+    if (u.kind === 'subuser') return reply.code(403).send({ error: 'forbidden' });
+    const { id } = req.params as { id: string };
+    const target = ctx.subUsers.get(id);
+    if (!target) return reply.code(404).send({ error: 'subuser not found' });
+    if (u.role !== 'admin' && target.parentId !== u.id) {
+      return reply.code(403).send({ error: 'forbidden_parent' });
+    }
+    const parse = SubPatchSchema.safeParse(req.body);
+    if (!parse.success) return reply.code(400).send({ error: parse.error.message });
+    let updated = target;
+    if (parse.data.password) {
+      const hash = await argon2.hash(parse.data.password);
+      updated = ctx.subUsers.setPassword(id, hash) ?? updated;
+    }
+    if (parse.data.displayName) {
+      updated = ctx.subUsers.rename(id, parse.data.displayName) ?? updated;
+    }
+    const { passwordHash: _ph, ...rest } = updated;
+    return { subuser: rest };
+  });
+
+  app.delete('/api/admin/subusers/:id', subAuth, async (req, reply) => {
+    const u = req.user!;
+    if (u.kind === 'subuser') return reply.code(403).send({ error: 'forbidden' });
+    const { id } = req.params as { id: string };
+    const target = ctx.subUsers.get(id);
+    if (!target) return reply.code(404).send({ error: 'subuser not found' });
+    if (u.role !== 'admin' && target.parentId !== u.id) {
+      return reply.code(403).send({ error: 'forbidden_parent' });
+    }
+    ctx.subUsers.remove(id);
+    return { ok: true };
+  });
 }
