@@ -13,6 +13,7 @@ import { registerFsRoutes } from './routes/fs';
 import { registerTaskEvidenceRoutes } from './routes/taskEvidence';
 import { registerResearchRoutes } from './routes/research';
 import { registerSessionRoutes } from './routes/sessions';
+import { registerFolderRoutes } from './routes/folders';
 import { registerChatRoutes } from './routes/chat';
 import { registerMetricsRoutes } from './routes/metrics';
 
@@ -40,6 +41,7 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
   await registerTaskEvidenceRoutes(app, ctx);
   await registerResearchRoutes(app, ctx);
   await registerSessionRoutes(app, ctx);
+  await registerFolderRoutes(app, ctx);
   await registerChatRoutes(app, ctx);
   await registerMetricsRoutes(app, ctx);
 

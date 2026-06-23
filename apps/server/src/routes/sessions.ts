@@ -174,7 +174,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       }
       // folderId 非空时校验存在且属于本项目;null 表示显式清除归属(允许)。
       if (parse.data.folderId !== undefined && parse.data.folderId !== null) {
-        const f = ctx.folders?.get?.(parse.data.folderId);
+        const f = ctx.folders.get(parse.data.folderId);
         if (!f || f.projectId !== id) {
           return reply.code(400).send({ error: 'folder not found' });
         }

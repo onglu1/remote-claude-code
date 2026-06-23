@@ -24,8 +24,8 @@ export interface AppContext {
   projects: ProjectStore;
   users: UserStore;
   conversations: ConversationStore;
-  /** 文件夹存储:Task 8 先标 optional 让 PATCH 路由防御读;Task 9 接入 buildContext 后转必填。 */
-  folders?: FolderStore;
+  /** 文件夹存储:按项目+用户隔离的会话归类目录。 */
+  folders: FolderStore;
   tmux: Tmux;
   registry: SessionRegistry;
   chatRegistry: ChatRegistry;
@@ -52,6 +52,7 @@ export async function buildContext(config: Config): Promise<AppContext> {
   const tmux = new Tmux(config.tmuxSocket);
   const conversations = new ConversationStore(config.conversationsConfigPath);
   conversations.migrate(); // 给旧版无 sessionId 的会话补全
+  const folders = new FolderStore(config.foldersConfigPath, conversations);
 
   // AskUserQuestion hook（聊天选择题真值源）：幂等装配 settings（含绝对脚本路径）+ 建 askDir，
   // 启动 claude 时经 --settings 叠加注入、env 导出 RCC_ASK_DIR。仅对 remote-cc 拉起的会话生效。
@@ -99,6 +100,7 @@ export async function buildContext(config: Config): Promise<AppContext> {
     projects,
     users,
     conversations,
+    folders,
     tmux,
     registry: new SessionRegistry(makeRealBridgeFactory(tmux)),
     chatRegistry,
