@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Conversation, Folder } from '@rcc/shared';
 import { api } from '../lib/api';
+import { SessionContextMenu } from './SessionContextMenu';
 
 /**
  * 三态映射:把 Conversation 后端字段翻成 UI 状态枚举。纯函数,易测。
@@ -59,6 +60,11 @@ export interface SidebarTreeProps {
   onOpen: (conv: Conversation) => void;
   /** 数据变更后请求父刷新会话列表(避免本组件持有重复 state) */
   onRefresh: () => void;
+  /** 右键/长按菜单的回调:父端合并新 conv 或刷新 */
+  onPatched: (conv: Conversation) => void;
+  onClosed: (conv: Conversation) => void;
+  onResumed: (conv: Conversation) => void;
+  onDeleted: (cid: string) => void;
   /** 行内按钮:复制 sessionId、重命名、关闭(沿用原 ConversationList 行为) */
   onCopySessionId?: (conv: Conversation) => void;
   onRequestRename?: (conv: Conversation) => void;
@@ -76,6 +82,10 @@ export function SidebarTree(props: SidebarTreeProps) {
     folders,
     onFoldersChange,
     onOpen,
+    onPatched,
+    onClosed,
+    onResumed,
+    onDeleted,
     onCopySessionId,
     onRequestRename,
     onRequestClose,
@@ -139,8 +149,8 @@ export function SidebarTree(props: SidebarTreeProps) {
             {items.map((c) => {
               const cls = conversationStatus(c);
               const editing = editingId === c.id;
-              return (
-                <li key={c.id} className={`sidebar-item ${cls}`}>
+              const liNode = (
+                <li className={`sidebar-item ${cls}`}>
                   <span className={`dot ${cls}`} aria-label={cls} />
                   {c.starred && <span className="star" aria-label="加星">★</span>}
                   {editing && renderEditor ? (
@@ -198,6 +208,28 @@ export function SidebarTree(props: SidebarTreeProps) {
                     </>
                   )}
                 </li>
+              );
+              return (
+                <SessionContextMenu
+                  key={c.id}
+                  conv={c}
+                  folders={folders}
+                  projectId={projectId}
+                  onPatched={onPatched}
+                  onClosed={onClosed}
+                  onResumed={onResumed}
+                  onDeleted={onDeleted}
+                  onNewFolder={async (name) => {
+                    const r = await api.createFolder(projectId, name).catch(() => null);
+                    if (r) {
+                      onFoldersChange([...folders, r.folder]);
+                      return r.folder;
+                    }
+                    return null;
+                  }}
+                >
+                  {liNode}
+                </SessionContextMenu>
               );
             })}
           </ul>

@@ -178,6 +178,23 @@ export function ConversationList({
         onFoldersChange={setFolders}
         onOpen={onOpen}
         onRefresh={loadActive}
+        onPatched={(c) => {
+          // 本地替换该条:避免轮询前菜单点星点完 UI 不动
+          setConvs((prev) => prev.map((x) => (x.id === c.id ? c : x)));
+          if (c.name) onRenamed?.(c.id, c.name);
+        }}
+        onClosed={(c) => {
+          // close 不进垃圾箱、仅写 closedAt,本地更新状态
+          setConvs((prev) => prev.map((x) => (x.id === c.id ? c : x)));
+        }}
+        onResumed={(c) => {
+          setConvs((prev) => prev.map((x) => (x.id === c.id ? c : x)));
+        }}
+        onDeleted={(cid) => {
+          // softDelete 后从活动列表移除,刷新垃圾箱
+          setConvs((prev) => prev.filter((x) => x.id !== cid));
+          void loadTrash();
+        }}
         onCopySessionId={(c) => void copySessionId(c)}
         onRequestRename={startEdit}
         onRequestClose={(c) => void close(c.id)}

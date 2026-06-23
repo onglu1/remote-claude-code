@@ -1889,3 +1889,36 @@ select.input {
   font-family: inherit; font-size: 14px;
 }
 .sidebar-new-folder:hover { background: var(--surface); }
+
+/* ---- 右键/长按菜单(@radix-ui/react-context-menu) ---- */
+.ctx-menu {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-1);
+  min-width: 180px;
+  box-shadow: 0 8px 24px rgba(33, 29, 24, 0.12);
+  font-size: 14px;
+  color: var(--ink);
+  z-index: 200;
+}
+.ctx-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-radius: var(--radius-sm);
+  cursor: pointer; user-select: none; outline: none;
+}
+.ctx-item[data-highlighted] { background: var(--surface-sunken); }
+.ctx-item.danger { color: var(--danger); }
+.ctx-item.disabled,
+.ctx-item[data-disabled] { color: var(--muted); cursor: not-allowed; }
+.ctx-sep { height: 1px; background: var(--line); margin: var(--sp-1) var(--sp-2); }
+.ctx-arrow { color: var(--muted); }
+.ctx-hint { color: var(--muted); font-size: 12px; margin-left: 8px; }
+.ctx-input-row { padding: 6px 8px; }
+.ctx-input {
+  width: 100%; padding: 6px 8px;
+  background: var(--bg); border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm); color: var(--ink);
+  font-family: inherit; font-size: 13px;
+}
+.ctx-input:focus { outline: none; border-color: var(--accent); }
