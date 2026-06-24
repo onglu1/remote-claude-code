@@ -162,7 +162,10 @@ export async function buildContext(config: Config): Promise<AppContext> {
     folders,
     tmux,
     getTmux,
-    registry: new SessionRegistry(makeRealBridgeFactory(tmux)),
+    // 多用户隔离 2026-06-24:终端 SessionRegistry 不再 baked-in ServiceUser 的 Tmux,
+    // 改成接 getTmux 工厂 + serviceUser,subscribe 时按 spec.unixUser 取对应 socket
+    // (跨 user 时 pty.spawn 走 sudo 前缀;同 ServiceUser 零开销直 spawn 'tmux')。
+    registry: new SessionRegistry(makeRealBridgeFactory(getTmux, config.serviceUser)),
     chatRegistry,
     research,
     askLaunch,

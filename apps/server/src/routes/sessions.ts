@@ -449,7 +449,10 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       const command = `${project.launchCommand} ${effortFlag(conv.effort)} ${launchFlag(conv.sessionId, projectsDirFor(user.unixUser, ctx.config.serviceUser))}`;
       const handle = ctx.registry.subscribe(
         cid,
-        { tmuxName: conv.tmuxName, cwd: project.path, command, cols, rows },
+        // 多用户隔离 2026-06-24:必须把登录身份的 unixUser 透给 BridgeSpec,
+        // 否则 ptyBridge 落到 ServiceUser(wangleyan)socket,zhangrengang 的项目里
+        // claude Bash 工具看到的就是 wangleyan(实证 bug)。
+        { tmuxName: conv.tmuxName, cwd: project.path, command, cols, rows, unixUser: user.unixUser },
         {
           onData: (data) => safeSend(socket, encodeServerMessage({ type: 'data', data })),
           onExit: (code) => {
