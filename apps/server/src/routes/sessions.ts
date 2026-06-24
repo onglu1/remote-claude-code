@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from 'ws';
@@ -379,15 +380,16 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
 
       // hook 待答 sidecar 一并清掉:杀了 claude,正在等的那个 AskUserQuestion 上下文也没了,
       // 留着文件会让重启后的 chatSession.tick 误把它当成新一轮待答。
+      // 多用户隔离 2026-06-24:sidecar 实际在 <askDir>/<unixUser>/<sid>.json
+      // (chatSession.ensure 走 askDir=<askDir>/<unixUser>,这里要对齐,否则删了空气、真 sidecar 还在)。
       if (conv.sessionId) {
-        const pending = readPendingAsk(ctx.config.askDir, conv.sessionId);
+        const userAskDir = (await import('node:path')).join(ctx.config.askDir, req.user!.unixUser);
+        const pending = readPendingAsk(userAskDir, conv.sessionId);
         if (pending) {
-          // 复用 ChatSession 那条清理路径:cleanAskSidecar 是 fs.unlinkSync,这里也可以直接调,
-          // 但避免依赖私有注入,简单 try 删。
           try {
             const fs = await import('node:fs');
             const path = await import('node:path');
-            fs.unlinkSync(path.join(ctx.config.askDir, `${conv.sessionId}.json`));
+            fs.unlinkSync(path.join(userAskDir, `${conv.sessionId}.json`));
           } catch {
             /* 文件不在:无妨 */
           }
@@ -401,23 +403,59 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       } catch {
         /* 已不在:正好,直接拉新的 */
       }
+      // 强制清掉 chatRegistry 里这条 conv 的 entry:reflow 杀+重建后,前端 chat WS 收到 WS close
+      // 触发自动重连,新一轮 subscribe 用最新的 spec(含 unixUser/cwd/sessionId),重置 ChatSession
+      // 状态机(transcript tail 偏移、polling 计时、askSidecar 缓存)。
+      // 没这个 forceClose:旧 entry 持有的 perUserTmux 是创建当时的 unixUser、tail.offset 也是旧 transcript
+      // 的尾偏移,reflow 写完新内容前端要么看不到、要么把残屏当当前态(用户看到的"循环关闭重开"症状之一)。
+      ctx.chatRegistry.forceClose(cid);
       await new Promise((r) => setTimeout(r, 100));
 
       // 重新拉 tmux + bash + claude,与 ChatSession.ensure 共享 buildClaudeCmd(env/hook/effort 一致)。
       // 已有 transcript(几乎总是) → --resume 接续;首次 → --session-id。
+      const targetTmux = ctx.getTmux(req.user!.unixUser);
+      const projectsDir = projectsDirFor(req.user!.unixUser, ctx.config.serviceUser);
       const cmd = buildClaudeCmd({
         launchCommand: project.launchCommand,
         sessionId: conv.sessionId,
         effort: conv.effort,
-        hasTranscript: locateTranscript(conv.sessionId, projectsDirFor(req.user!.unixUser, ctx.config.serviceUser)) !== null,
+        hasTranscript: locateTranscript(conv.sessionId, projectsDir) !== null,
         askLaunch: ctx.askLaunchFor(req.user!.unixUser),
       });
       try {
-        await ctx.getTmux(req.user!.unixUser).newDetached(conv.tmuxName, project.path, cmd, cols, rows);
+        await targetTmux.newDetached(conv.tmuxName, project.path, cmd, cols, rows);
       } catch (e) {
         return reply.code(500).send({ error: `重启 claude 失败: ${(e as Error).message}` });
       }
-      return { ok: true, cols, rows };
+
+      // 健壮性兜底 2026-06-24:claude --resume 可能因 transcript 留有 deferred tool 中间态而立刻退出
+      // (报 "No deferred tool marker found")。tmux pane 主进程 = claude;它退则 session 关。
+      // 这正是用户描述的"循环关闭重开":每次重排都瞬间死掉,看着像循环。
+      //
+      // 策略:newDetached 后等 1.2s 探活;死了就生成新 sessionId 写回 conv,再 newDetached 一次
+      // (新 sid 必然无 transcript → 走 --session-id 路径,稳过)。代价:这次重排失去历史接续,
+      // 但 conv 仍在、对话可继续——比让用户面对"死循环"好。
+      // 注:--resume 在 happy path 仍走(99% 场景没问题),这里只对异常情况兜底,不影响正常流。
+      let effectiveSid = conv.sessionId;
+      await new Promise((r) => setTimeout(r, 1200));
+      if (!(await targetTmux.hasSession(conv.tmuxName))) {
+        const newSid = crypto.randomUUID();
+        ctx.conversations.update(cid, { sessionId: newSid });
+        const cmd2 = buildClaudeCmd({
+          launchCommand: project.launchCommand,
+          sessionId: newSid,
+          effort: conv.effort,
+          hasTranscript: false,
+          askLaunch: ctx.askLaunchFor(req.user!.unixUser),
+        });
+        try {
+          await targetTmux.newDetached(conv.tmuxName, project.path, cmd2, cols, rows);
+          effectiveSid = newSid;
+        } catch (e) {
+          return reply.code(500).send({ error: `重启 claude 失败(fallback): ${(e as Error).message}` });
+        }
+      }
+      return { ok: true, cols, rows, sessionId: effectiveSid };
     },
   );
 

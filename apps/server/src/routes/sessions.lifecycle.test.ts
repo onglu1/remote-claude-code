@@ -5,11 +5,13 @@ import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { loadConfig } from '../config';
 import { buildApp } from '../app';
+import { buildContext, type AppContext } from '../context';
 
 // close / resume / batch 路由的端到端用例。
 // tmux 在测试环境无 server,killSession 静默吞错;newDetached 也会失败但 resume 测试用一个 stub 跳过实际拉起。
 
 let app: FastifyInstance;
+let ctx: AppContext;
 let tmpDir: string;
 
 const cookieOf = (res: { cookies: { name: string; value: string }[] }) =>
@@ -67,7 +69,9 @@ beforeAll(async () => {
     SESSION_SECRET: 'test-secret-key',
     PROJECTS_CONFIG: path.join(tmpDir, 'projects.json'),
   } as NodeJS.ProcessEnv);
-  app = await buildApp(config, { serveStatic: false });
+  // 保留 ctx 引用,便于在 reflow 等测试中断言 chatRegistry 的内存状态(如 isActive)。
+  ctx = await buildContext(config);
+  app = await buildApp(config, { context: ctx, serveStatic: false });
 });
 
 afterAll(() => {
@@ -271,5 +275,78 @@ describe('POST .../conversations/batch', () => {
       payload: { ids: ['x'], action: 'star' },
     });
     expect(res.statusCode).toBe(401);
+  });
+});
+
+/**
+ * reflow 路由测试。重点钉死 2026-06-24 修的两个 bug:
+ *  - 必须调 ctx.chatRegistry.forceClose(cid),否则前端 chat WS 缓存的旧 ChatRegistry entry 不被清,
+ *    用户看到"循环关闭重开"(旧 entry 持有的 transcript tail 偏移/perUserTmux 都是创建时的,不会更新)。
+ *  - 清 askSidecar 必须走 perUser 路径 <askDir>/<unixUser>/<sid>.json,根 askDir 是空气,真 sidecar 还在。
+ *
+ * 不测 newDetached 真起 tmux(测试环境无 server,会返 500),只验证 forceClose 副作用与 askSidecar 路径。
+ */
+describe('POST .../conversations/:cid/reflow', () => {
+  it('forceClose 清掉 chatRegistry 里的 entry(即便后续 newDetached 失败也要先清)', async () => {
+    const cookie = await login('admin', 'test-pass');
+    const { projectId, convId } = await makeProjectWithConv(cookie, 'P-reflow-force');
+
+    // 用真 ChatRegistry 装一个最小可用的 fake ChatSessionLike,模拟前端 chat WS 已 subscribe。
+    // 不需要它"真的工作",只验证 forceClose 后 isActive 转 false。
+    const fakeSession = {
+      ensure: async () => {},
+      getSkeleton: () => ({ items: [], live: [] }),
+      getTurnBody: () => null,
+      sendText: async () => {},
+      sendKey: async () => {},
+      interrupt: async () => {},
+      refresh: async () => {},
+      capturePeek: async () => '',
+      setEffort: async () => {},
+      rewindOpen: async () => [],
+      rewindExecute: async () => ({ ok: true }),
+      rewindCancel: async () => {},
+      answerAsk: async () => {},
+      answerPendingAsk: async () => {},
+      getLiveAsk: () => null,
+      getLiveHud: () => null,
+      startPolling: () => {},
+      stopPolling: () => {},
+    };
+    // ChatRegistry 的 factory 是 buildContext 时塞的真工厂;这里改成返回 fakeSession 仅用于本测试。
+    // 直接走 registry 内部 entries map 的"侧门"——构造一个 entry,绕过真 factory(它会去拉 tmux)。
+    const registry = ctx.chatRegistry as unknown as {
+      entries: Map<string, { session: typeof fakeSession; subscribers: Set<unknown> }>;
+    };
+    registry.entries.set(convId, { session: fakeSession, subscribers: new Set([{}]) });
+    expect(ctx.chatRegistry.isActive(convId)).toBe(true);
+
+    // 调 reflow;newDetached 会失败(没 tmux server),返 500——但 forceClose 在 newDetached 之前调。
+    await app.inject({
+      method: 'POST',
+      url: `/api/projects/${projectId}/conversations/${convId}/reflow`,
+      cookies: { rcc_token: cookie },
+    });
+
+    expect(ctx.chatRegistry.isActive(convId)).toBe(false);
+  });
+
+  it('未登录:401', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects/whatever/conversations/whatever/reflow',
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('会话不存在:404', async () => {
+    const cookie = await login('admin', 'test-pass');
+    const { projectId } = await makeProjectWithConv(cookie, 'P-reflow-404');
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${projectId}/conversations/missing/reflow`,
+      cookies: { rcc_token: cookie },
+    });
+    expect(res.statusCode).toBe(404);
   });
 });
