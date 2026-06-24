@@ -1,4 +1,4 @@
-import { readFileSync, statSync, unlinkSync } from 'node:fs';
+import { readFileSync, statSync, unlinkSync, mkdirSync, chmodSync } from 'node:fs';
 import path from 'node:path';
 import argon2 from 'argon2';
 import type { Config } from './config';
@@ -95,6 +95,22 @@ export async function buildContext(config: Config): Promise<AppContext> {
 
   // AskUserQuestion hook:按 unix 用户分子目录,每个 unixUser 一份独立 settings.json
   // (hook 进程跑在目标 uid 下,settings.json 路径必须该 uid 可读;独立子目录避免互写)。
+  //
+  // 多用户隔离 2026-06-24:这些子目录是 ServiceUser 进程创建的(owner=ServiceUser),
+  // 但 hook 跑在目标 unixUser 下,要往里写 sidecar(<dir>/<sid>.json)——
+  // 默认 755 跨用户写不进,所以 ensureWritableForAll 把目录 chmod 1777(粘 sticky bit
+  // 防互删,others 可读写;sidecar 内容不敏感,可接受这个开放性)。
+  // 文件本身的写入(ensureAskHookSettings 写 settings.json、hook 进程写 sidecar)
+  // 各自的 owner 保持 default umask(644),互不踩。
+  function ensureWritableForAll(dir: string): void {
+    try {
+      mkdirSync(dir, { recursive: true });
+      chmodSync(dir, 0o1777);
+    } catch {
+      /* 已存在 / 已是该权限 / 其他 cluster 共享盘 noperm:忽略,真不可写时 hook 写失败由 HUD 退化 */
+    }
+  }
+
   const askHookScriptPath = path.join(config.repoRoot, 'apps/server/scripts/hooks/rcc-ask-hook.mjs');
   const askLaunchCache = new Map<string, { envExport: string; settingsArg: string }>();
   function askLaunchFor(unixUser: string) {
@@ -107,11 +123,29 @@ export async function buildContext(config: Config): Promise<AppContext> {
       hookScriptPath: askHookScriptPath,
       settingsPath: userSettingsPath,
     });
+    // 子目录与父 askDir 都需要 1777:子目录用于该 unixUser 的 hook 写 sidecar;
+    // 父目录给其他 unixUser 自己 mkdir 子目录用(若先用了别人的 unixUser 触发 askLaunchFor)。
+    ensureWritableForAll(config.askDir);
+    ensureWritableForAll(userAskDir);
     const launch = askLaunchExtra(userAskDir, userSettingsPath);
     askLaunchCache.set(unixUser, launch);
     return launch;
   }
   const askLaunch = askLaunchFor(config.serviceUser); // deprecated 别名
+
+  // 同 ask:statuslineDir 也按 unixUser 分子目录 + 开放写权限。
+  // 如果用户装了 setup-statusline,statusLine hook 跑在自己 uid 下,要往这里写 sidecar。
+  // 没装也无影响(HUD 退化到 transcript 兜底)。
+  const statuslineCache = new Map<string, string>();
+  function statuslineDirFor(unixUser: string): string {
+    const cached = statuslineCache.get(unixUser);
+    if (cached) return cached;
+    const dir = path.join(config.statuslineDir, unixUser);
+    ensureWritableForAll(config.statuslineDir);
+    ensureWritableForAll(dir);
+    statuslineCache.set(unixUser, dir);
+    return dir;
+  }
 
   const chatRegistry = new ChatRegistry((spec, events) => {
     // 多用户:每个 spec 带 unixUser(老 spec 缺则回退 ServiceUser,过渡兼容)。
@@ -119,7 +153,9 @@ export async function buildContext(config: Config): Promise<AppContext> {
     const perUserTmux = getTmux(effectiveUnixUser);
     const perUserAskLaunch = askLaunchFor(effectiveUnixUser);
     const userAskDir = path.join(config.askDir, effectiveUnixUser);
-    const userStatuslineDir = path.join(config.statuslineDir, effectiveUnixUser);
+    // 走 statuslineDirFor 触发 ensureWritableForAll,保证子目录 1777
+    // (跨 unix hook 进程能写 sidecar,后端再读出 HUD 数据)。
+    const userStatuslineDir = statuslineDirFor(effectiveUnixUser);
     // 多用户隔离:transcript 路径走目标 unix 用户 home,
     // 不走 ServiceUser home(否则 zhangrengang claude 写的 jsonl 永远找不到)。
     const projectsDir = projectsDirFor(effectiveUnixUser, config.serviceUser);
@@ -152,6 +188,21 @@ export async function buildContext(config: Config): Promise<AppContext> {
     );
   });
   const research = new ResearchProviderRegistry();
+
+  // 启动时预热:对所有已知 unixUser(主账号 + 子用户继承的 parent unixUser)触发
+  // askLaunchFor 与 statuslineDirFor,确保每条用户路径的子目录权限(1777)在启动后立刻齐备,
+  // 不必等到该用户首次登录 + 用 chat 时才修复(那时反而是 zhangrengang 写 sidecar 失败、HUD 退化的窗口期)。
+  const allUnixUsers = new Set<string>([config.serviceUser]);
+  for (const u of users.load()) if (u.unixUser) allUnixUsers.add(u.unixUser);
+  for (const s of subUsers.load()) {
+    const parent = users.get(s.parentId);
+    if (parent?.unixUser) allUnixUsers.add(parent.unixUser);
+  }
+  for (const u of allUnixUsers) {
+    askLaunchFor(u);
+    statuslineDirFor(u);
+  }
+
   return {
     config,
     adminHash,
