@@ -95,6 +95,18 @@ export const api = {
   adminDeleteSubUser: (id: string) =>
     req<{ ok: true }>('DELETE', `/api/admin/subusers/${id}`),
 
+  // ---- 项目跨 namespace 管理(管理员降级 2026-06-25) ----
+  // 普通 listProjects/deleteProject 现在只针对自己 namespace;
+  // 想看/改/删全量需用下面这组(仅 admin 可成功调用,非 admin 403)。
+  /** 列所有人的项目(管理员视图)。 */
+  adminListProjects: () => req<{ projects: Project[] }>('GET', '/api/admin/projects'),
+  /** 把项目转给另一个 namespace(主账号 user.id 或子用户 subUser.id)。 */
+  adminSetProjectOwner: (id: string, ownerId: string) =>
+    req<{ project: Project }>('PATCH', `/api/admin/projects/${id}`, { ownerId }),
+  /** 删别人的项目(绕过 canSeeProject 的 admin 专用通道)。 */
+  adminDeleteProject: (id: string) =>
+    req<{ ok: true }>('DELETE', `/api/admin/projects/${id}`),
+
   /** 自助改自己口令(主账号或子用户都走这条)。 */
   changeMyPassword: (oldPassword: string, newPassword: string) =>
     req<{ ok: true }>('PATCH', '/api/me/password', { oldPassword, newPassword }),

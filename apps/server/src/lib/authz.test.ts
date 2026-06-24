@@ -7,9 +7,12 @@ const alice = { role: 'user' as const, namespaceId: 'u-alice' };
 const aliceDev = { role: 'user' as const, namespaceId: 's-alice-dev' };
 
 describe('canSeeProject', () => {
-  it('admin 看任意项目(含无 owner)', () => {
-    expect(canSeeProject(admin, { ownerId: 'someone' })).toBe(true);
-    expect(canSeeProject(admin, {})).toBe(true);
+  // 管理员降级 2026-06-25:admin 不再自动 bypass,跟普通用户一样只看自己 namespace。
+  // 跨 namespace 的"管"由 /api/admin/projects/* 专用路由提供(那条路独立鉴权,绕过这层 view 过滤)。
+  it('admin 只看自己 namespace 的项目(不再 bypass)', () => {
+    expect(canSeeProject(admin, { ownerId: 'admin-1' })).toBe(true);
+    expect(canSeeProject(admin, { ownerId: 'someone-else' })).toBe(false);
+    expect(canSeeProject(admin, {})).toBe(false);
   });
 
   it('owner 看自己 namespace 的项目', () => {
@@ -20,7 +23,7 @@ describe('canSeeProject', () => {
     expect(canSeeProject(alice, { ownerId: 'u-bob' })).toBe(false);
   });
 
-  it('普通用户看不到无 owner 的项目(仅 admin 可见)', () => {
+  it('任何人都看不到无 owner 的项目(存量缺 ownerId 的需 migrate 兜底)', () => {
     expect(canSeeProject(alice, {})).toBe(false);
     expect(canSeeProject(alice, { ownerId: undefined })).toBe(false);
   });

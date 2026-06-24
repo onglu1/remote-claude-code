@@ -9,30 +9,27 @@ export function ProjectList({
   onOpen,
   onOpenMetrics,
   onOpenUsers,
+  onOpenAdminProjects,
   onLock,
 }: {
   user: AuthUser;
   onOpen: (p: Project) => void;
   onOpenMetrics: () => void;
   onOpenUsers: () => void;
+  onOpenAdminProjects: () => void;
   onLock: () => void;
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [adding, setAdding] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  // admin 视图把 ownerId 映射成用户名，给每行加 owner 标签。
-  const [ownerNames, setOwnerNames] = useState<Record<string, string>>({});
 
+  // 管理员降级 2026-06-25:admin 普通入口跟普通用户一样只看自己 namespace,
+  // 所以这里 owner 标签是冗余信息(每行都是 user.username),已移除。
+  // 跨 namespace 看 owner 现在去顶栏「管理项目」(/admin/projects)。
   const load = () => api.listProjects().then((r) => setProjects(r.projects)).catch(() => {});
   useEffect(() => {
     load();
-    if (user.role === 'admin') {
-      api
-        .adminListUsers()
-        .then((r) => setOwnerNames(Object.fromEntries(r.users.map((u) => [u.id, u.username]))))
-        .catch(() => {});
-    }
-  }, [user.role]);
+  }, []);
 
   return (
     <div className="app">
@@ -45,9 +42,18 @@ export function ProjectList({
           资源
         </button>
         {user.role === 'admin' && (
-          <button className="btn ghost sm" onClick={onOpenUsers}>
-            用户
-          </button>
+          <>
+            <button className="btn ghost sm" onClick={onOpenUsers}>
+              用户
+            </button>
+            <button
+              className="btn ghost sm"
+              onClick={onOpenAdminProjects}
+              title="跨 namespace 管理所有人的项目"
+            >
+              管理项目
+            </button>
+          </>
         )}
         <button
           className="btn ghost sm"
@@ -72,9 +78,6 @@ export function ProjectList({
                 <div className="name">{p.name}</div>
                 <div className="sub">{p.path}</div>
               </div>
-              {user.role === 'admin' && p.ownerId && ownerNames[p.ownerId] && (
-                <span className="tag">{ownerNames[p.ownerId]}</span>
-              )}
               <span className={`tag ${p.type}`}>{p.type === 'research' ? '科研' : '开发'}</span>
               <span className="chev">›</span>
             </button>

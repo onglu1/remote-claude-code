@@ -9,6 +9,7 @@ import { ProjectDetail } from './components/ProjectDetail';
 import { ConversationView } from './components/ConversationView';
 import { ResourcePanel } from './components/ResourcePanel';
 import { UserAdmin } from './components/UserAdmin';
+import { ProjectAdmin } from './components/ProjectAdmin';
 
 type Nav = ReturnType<typeof useRoute>['navigate'];
 
@@ -31,6 +32,7 @@ export function App() {
     const titles: Partial<Record<Route['name'], string>> = {
       resources: '资源',
       users: '用户管理',
+      'admin-projects': '管理项目',
     };
     document.title = titles[route.name] ?? 'remote-cc';
   }, [route.name, user]);
@@ -58,6 +60,14 @@ export function App() {
         return <div className="app" />;
       }
       return <UserAdmin me={user} onBack={() => navigate({ name: 'projects' })} />;
+    case 'admin-projects':
+      // 同 users:仅 admin 可见,非 admin 退回项目列表。
+      // 管理员降级 2026-06-25:admin 跨 namespace 看/改/删项目的专用通道。
+      if (user.role !== 'admin') {
+        navigate({ name: 'projects' }, { replace: true });
+        return <div className="app" />;
+      }
+      return <ProjectAdmin onBack={() => navigate({ name: 'projects' })} />;
     case 'projects':
       break;
     case 'unknown':
@@ -71,6 +81,7 @@ export function App() {
       onOpen={(project) => navigate({ name: 'project', projectId: project.id, tab: 'sessions' })}
       onOpenMetrics={() => navigate({ name: 'resources' })}
       onOpenUsers={() => navigate({ name: 'users' })}
+      onOpenAdminProjects={() => navigate({ name: 'admin-projects' })}
       onLock={async () => {
         await api.lock().catch(() => {});
         setUser(null);

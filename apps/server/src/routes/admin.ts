@@ -184,4 +184,56 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: AppContext)
     ctx.subUsers.remove(id);
     return { ok: true };
   });
+
+  // ---- 项目跨 namespace 管理(管理员降级 2026-06-25) ----
+  // admin 普通入口已与其他用户同等(canSeeProject 不再 bypass admin),想跨 namespace
+  // "管"项目需走这组专用路由。守卫 = requireAuth + requireAdmin,绕过 canSeeProject。
+  //
+  // 设计取舍:
+  //  - GET 列全部项目:admin 才能看,普通用户 / 子用户 403。
+  //  - PATCH owner:把项目从 A 转给 B(B 必须是已知 user.id 或 subUser.id)。
+  //    转完之后,A 在他的视图里就看不见这项目了,B 能看见——所有 fall-through 的功能
+  //    (会话/文件/research/folder)都自动跟着 canSeeProject 走,无需额外改。
+  //  - DELETE:绕过 canSeeProject 删项目实体。**不**清空 conversations / folders 残留——
+  //    那些走 projectId 关联,父项目消失后它们就成孤儿,各自的可见性继续按原 ownerId 算
+  //    (普通用户列 conversations 时已经会按 project 不存在过滤掉),与现有 DELETE 路径同语义。
+  //
+  // 不做的事:在这里加"管理员替别人新建项目"。要新建仍走 POST /api/projects + 自己 namespace,
+  // 想转给别人就建完用本路由 PATCH owner——少一个分支、行为更可预测。
+  const PatchProjectSchema = z.object({
+    ownerId: z.string().min(1),
+  });
+  const projectAdminGuard = { preHandler: [requireAuth, requireAdmin] };
+
+  app.get('/api/admin/projects', projectAdminGuard, async () => {
+    return { projects: ctx.projects.load() };
+  });
+
+  app.patch('/api/admin/projects/:id', projectAdminGuard, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parse = PatchProjectSchema.safeParse(req.body);
+    if (!parse.success) return reply.code(400).send({ error: parse.error.message });
+    const target = ctx.projects.get(id);
+    if (!target) return reply.code(404).send({ error: 'project not found' });
+    // 目标 ownerId 必须是已知 namespace(主账号 user.id 或子用户 subUser.id)。
+    // 这一层是为了避免管理员手滑写错 id 导致项目永远没人看得见(那等于隐性丢失)。
+    const allNs = new Set<string>([
+      ...ctx.users.load().map((u) => u.id),
+      ...ctx.subUsers.load().map((s) => s.id),
+    ]);
+    if (!allNs.has(parse.data.ownerId)) {
+      return reply.code(400).send({ error: 'owner_not_found' });
+    }
+    const updated = ctx.projects.setOwnerId(id, parse.data.ownerId);
+    if (!updated) return reply.code(404).send({ error: 'project not found' });
+    return { project: updated };
+  });
+
+  app.delete('/api/admin/projects/:id', projectAdminGuard, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const target = ctx.projects.get(id);
+    if (!target) return reply.code(404).send({ error: 'project not found' });
+    ctx.projects.remove(id);
+    return { ok: true };
+  });
 }

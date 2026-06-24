@@ -22,6 +22,8 @@ export type Route =
     }
   | { name: 'resources' }
   | { name: 'users' }
+  /** 管理员降级 2026-06-25:admin 普通入口只看自己 namespace,跨 namespace 管项目走这条。 */
+  | { name: 'admin-projects' }
   | { name: 'unknown' };
 
 /** 把 pathname 切成已解码、去空段、去尾斜杠的段数组。 */
@@ -44,6 +46,11 @@ export function parseRoute(pathname: string): Route {
 
   // /users
   if (seg.length === 1 && seg[0] === 'users') return { name: 'users' };
+
+  // /admin/projects(admin 跨 namespace 管理页)
+  if (seg.length === 2 && seg[0] === 'admin' && seg[1] === 'projects') {
+    return { name: 'admin-projects' };
+  }
 
   // /projects/...
   if (seg[0] === 'projects') {
@@ -91,6 +98,8 @@ export function buildRoute(route: Route): string {
       return '/resources';
     case 'users':
       return '/users';
+    case 'admin-projects':
+      return '/admin/projects';
     case 'project': {
       const base = `/projects/${enc(route.projectId)}`;
       return route.tab === 'sessions' ? base : `${base}/${route.tab}`;

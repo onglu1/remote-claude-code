@@ -44,6 +44,20 @@ export class ProjectStore {
   }
 
   /**
+   * 管理员专用:把项目 owner 改成另一个 namespace(主账号 user.id 或子用户 subUser.id)。
+   * 合法性(目标 namespace 真的存在)由 route 层校验,这里只负责持久化。
+   * 找不到项目返 undefined,与 setPassword/setUnixUser 等存储方法语义对齐。
+   */
+  setOwnerId(id: string, ownerId: string): Project | undefined {
+    const projects = this.load();
+    const i = projects.findIndex((p) => p.id === id);
+    if (i === -1) return undefined;
+    projects[i] = { ...projects[i], ownerId };
+    this.write(projects);
+    return projects[i];
+  }
+
+  /**
    * 一次性迁移：给缺 ownerId 的存量项目回填为 adminId 并落盘（多用户上线前的项目都归 admin）。
    * 幂等：已有 ownerId 的不动；无需改动则不写盘。
    */

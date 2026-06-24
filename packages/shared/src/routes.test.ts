@@ -82,6 +82,17 @@ describe('parseRoute', () => {
     expect(parseRoute('/users')).toEqual({ name: 'users' });
   });
 
+  it('/admin/projects → admin-projects', () => {
+    expect(parseRoute('/admin/projects')).toEqual({ name: 'admin-projects' });
+    expect(parseRoute('/admin/projects/')).toEqual({ name: 'admin-projects' });
+  });
+
+  it('/admin/<未知子段> → unknown(防误命中)', () => {
+    expect(parseRoute('/admin')).toEqual({ name: 'unknown' });
+    expect(parseRoute('/admin/users')).toEqual({ name: 'unknown' });
+    expect(parseRoute('/admin/projects/extra')).toEqual({ name: 'unknown' });
+  });
+
   it('完全陌生路径 → unknown', () => {
     expect(parseRoute('/nope')).toEqual({ name: 'unknown' });
     expect(parseRoute('/projects')).toEqual({ name: 'unknown' });
@@ -144,9 +155,10 @@ describe('buildRoute', () => {
     );
   });
 
-  it('resources / users / unknown', () => {
+  it('resources / users / admin-projects / unknown', () => {
     expect(buildRoute({ name: 'resources' })).toBe('/resources');
     expect(buildRoute({ name: 'users' })).toBe('/users');
+    expect(buildRoute({ name: 'admin-projects' })).toBe('/admin/projects');
     expect(buildRoute({ name: 'unknown' })).toBe('/');
   });
 
@@ -171,6 +183,7 @@ describe('round-trip parse∘build', () => {
     { name: 'conversation', projectId: 'a b', convId: 'x/y', view: 'chat' },
     { name: 'resources' },
     { name: 'users' },
+    { name: 'admin-projects' },
   ];
   it.each(cases)('parse(build(%o)) 还原', (route) => {
     expect(parseRoute(buildRoute(route))).toEqual(route);
