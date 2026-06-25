@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Project, Conversation, Folder } from '@rcc/shared';
+import type { Project, Conversation, Folder, AgentKind } from '@rcc/shared';
 import { api } from '../lib/api';
 import { SidebarTree } from './SidebarTree';
 import { MultiSelectToolbar } from './MultiSelectToolbar';
+import { NewConversationDialog } from './NewConversationDialog';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -24,6 +25,7 @@ export function ConversationList({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [showNewDialog, setShowNewDialog] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const loadActive = () =>
@@ -47,13 +49,17 @@ export function ConversationList({
     }
   }, [editingId]);
 
-  const create = async () => {
+  // 新建会话:opts 由 NewConversationDialog 提交(agent/名称/启动命令);
+  // 留空字段交后端 adapter 兜底。沿用既有 busy 锁 + loadActive 刷新 + onOpen 直接进入。
+  const create = async (opts?: { name?: string; agentKind?: AgentKind; launchCommand?: string }) => {
     if (busy) return;
     setBusy(true);
     try {
-      const { conversation } = await api.createConversation(project.id);
+      const { conversation } = await api.createConversation(project.id, opts);
       await loadActive();
       onOpen(conversation);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '新建会话失败');
     } finally {
       setBusy(false);
     }
@@ -251,7 +257,12 @@ export function ConversationList({
         onToggleSelect={toggleSelect}
       />
 
-      <button className="btn primary block" style={{ marginTop: 'var(--sp-5)' }} onClick={create} disabled={busy}>
+      <button
+        className="btn primary block"
+        style={{ marginTop: 'var(--sp-5)' }}
+        onClick={() => setShowNewDialog(true)}
+        disabled={busy}
+      >
         ＋ 新建会话
       </button>
       <button
@@ -301,6 +312,18 @@ export function ConversationList({
             </div>
           ))}
         </div>
+      )}
+
+      {showNewDialog && (
+        <NewConversationDialog
+          project={project}
+          onCreate={(opts) => {
+            // 先关弹窗(create 成功会 onOpen 切到会话视图),再发起创建。
+            setShowNewDialog(false);
+            void create(opts);
+          }}
+          onCancel={() => setShowNewDialog(false)}
+        />
       )}
     </div>
   );
