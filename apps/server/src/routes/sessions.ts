@@ -1,28 +1,19 @@
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from 'ws';
-import type { Conversation, ScrollbackChunk } from '@rcc/shared';
-import { decodeClientMessage, encodeServerMessage } from '@rcc/shared';
+import type { AgentKind, Conversation, ScrollbackChunk } from '@rcc/shared';
+import { ConversationCreateSchema, decodeClientMessage, encodeServerMessage } from '@rcc/shared';
 import type { AppContext } from '../context';
 import { makeRequireAuth, resolveUser } from '../plugins/requireAuth';
 import { COOKIE_NAME } from '../lib/auth';
 import { canSeeProject } from '../lib/authz';
-import { launchFlag, locateTranscript, projectsDirFor } from '../lib/session/chat/transcript';
-import { effortFlag } from '../lib/session/effort';
 import { computeWindow } from '../lib/session/scrollback';
 import { readPendingAsk } from '../lib/session/chat/askSidecar';
-import { buildClaudeCmd } from '../lib/session/chat/launch';
-
-const CreateConvSchema = z.object({
-  name: z.string().optional(),
-  /** 可选:用一个已存在的 claude sessionId 新建会话,首次拉起会以 --resume 接续。 */
-  sessionId: z
-    .string()
-    .trim()
-    .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, '需要标准 UUID 格式')
-    .optional(),
-});
+import { makeClaudeAdapter } from '../lib/session/chat/agent/claudeAdapter';
+import { makeCodexAdapter } from '../lib/session/chat/agent/codexAdapter';
+import { resolveLaunchCommand } from '../lib/session/chat/agent/resolveLaunchCommand';
 // PATCH 入参:三选一(name/folderId/starred),至少给一个字段;trim 与长度约束保持旧 rename 语义。
 // folderId:undefined=不改、null=显式清除、字符串=指向某文件夹(下方路由校验存在与归属)。
 const PatchConvSchema = z
@@ -45,6 +36,18 @@ const BatchSchema = z.object({
 
 export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
   const requireAuth = makeRequireAuth(ctx.config.sessionSecret, ctx.users, ctx.subUsers);
+
+  // 两个 agent 适配器各建一次缓存复用(无 per-session 状态,按 agentKind 选其一),
+  // 避免每个请求重建。与 context.ts 同模式:claude 命令输出与既有 buildClaudeCmd 一字不差,
+  // 故 claude 路径行为零变化;codex 拼 'codex --yolo' / 'codex resume --yolo <UUID>'。
+  const claudeAdapter = makeClaudeAdapter(ctx.config.serviceUser);
+  const codexAdapter = makeCodexAdapter({
+    serviceUser: ctx.config.serviceUser,
+    // 给 unix 用户名 → HOME:ServiceUser 用进程 HOME,其余按 /home/<user> 约定
+    // (与 projectsDirFor 的跨用户 home 解析同源)。
+    homeFor: (u: string) => (u === ctx.config.serviceUser ? os.homedir() : `/home/${u}`),
+  });
+  const pickAdapter = (kind: AgentKind) => (kind === 'codex' ? codexAdapter : claudeAdapter);
 
   // 会话存活判定:按 unixUser 路由到对应 socket(子用户和父共用一个 socket,主账号自己)。
   // 多用户隔离设计 2026-06-23:不再用 ctx.tmux 单例(那是 ServiceUser=wangleyan 的),
@@ -88,12 +91,16 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       if (!project || !canSeeProject(req.user!, project)) {
         return reply.code(404).send({ error: 'project not found' });
       }
-      const parse = CreateConvSchema.safeParse(req.body ?? {});
+      const parse = ConversationCreateSchema.safeParse(req.body ?? {});
       if (!parse.success) {
         return reply.code(400).send({ error: parse.error.issues[0]?.message ?? 'bad request' });
       }
       // 显式指定 sessionId 时:首次拉起 ensure() 会检测 transcript 已存在 → --resume,接续旧对话。
-      const conv = ctx.conversations.create(id, parse.data.name ?? '', parse.data.sessionId);
+      // agentKind/launchCommand 透传 ConversationStore(缺省 claude + 走 adapter 默认,行为零变化)。
+      const conv = ctx.conversations.create(id, parse.data.name ?? '', parse.data.sessionId, {
+        agentKind: parse.data.agentKind,
+        launchCommand: parse.data.launchCommand,
+      });
       return { conversation: { ...conv, alive: false } };
     },
   );
@@ -223,7 +230,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
   );
 
   // resume:幂等。未 closedAt 直接返回当前状态(alive 实时探)。
-  // 否则用 buildClaudeCmd 沿 reflow 模式拉起 tmux + claude --resume(或 --session-id 首次)。
+  // 否则走 adapter 沿 reflow 模式拉起 tmux + agent(有 transcript→resume,首次→launch)。
   app.post(
     '/api/projects/:id/conversations/:cid/resume',
     { preHandler: requireAuth },
@@ -238,13 +245,15 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
         return reply.code(404).send({ error: 'conversation not found' });
       }
       if (!conv.closedAt) return { conversation: { ...conv, alive: await aliveOf(req.user!.unixUser, conv) } };
-      const cmd = buildClaudeCmd({
-        launchCommand: project.launchCommand,
-        sessionId: conv.sessionId,
-        effort: conv.effort,
-        hasTranscript: locateTranscript(conv.sessionId, projectsDirFor(req.user!.unixUser, ctx.config.serviceUser)) !== null,
-        askLaunch: ctx.askLaunchFor(req.user!.unixUser),
-      });
+      // 走 adapter:claude 输出与既有 buildClaudeCmd 一字不差;codex 拼 codex 子命令。
+      const adapter = pickAdapter(conv.agentKind);
+      const launchCommand = resolveLaunchCommand(conv, project);
+      const hasTranscript = adapter.locateTranscript(conv.sessionId, req.user!.unixUser, project.path) !== null;
+      // askLaunch 仅 claude 有意义(codex adapter 内部忽略);不按 capability 分支,逻辑一致。
+      const askLaunch = ctx.askLaunchFor(req.user!.unixUser);
+      const cmd = hasTranscript
+        ? adapter.buildResumeCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort, askLaunch })
+        : adapter.buildLaunchCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort, askLaunch });
       try {
         await ctx.getTmux(req.user!.unixUser).newDetached(conv.tmuxName, project.path, cmd, 120, 40);
       } catch (e) {
@@ -411,17 +420,15 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       ctx.chatRegistry.forceClose(cid);
       await new Promise((r) => setTimeout(r, 100));
 
-      // 重新拉 tmux + bash + claude,与 ChatSession.ensure 共享 buildClaudeCmd(env/hook/effort 一致)。
-      // 已有 transcript(几乎总是) → --resume 接续;首次 → --session-id。
+      // 重新拉 tmux + bash + agent,走 adapter(claude 与 ChatSession.ensure 共享同一拼装,
+      // env/hook/effort 一致;codex 拼 codex 子命令)。已有 transcript(几乎总是) → resume 接续;
+      // 首次 → launch。
       const targetTmux = ctx.getTmux(req.user!.unixUser);
-      const projectsDir = projectsDirFor(req.user!.unixUser, ctx.config.serviceUser);
-      const cmd = buildClaudeCmd({
-        launchCommand: project.launchCommand,
-        sessionId: conv.sessionId,
-        effort: conv.effort,
-        hasTranscript: locateTranscript(conv.sessionId, projectsDir) !== null,
-        askLaunch: ctx.askLaunchFor(req.user!.unixUser),
-      });
+      const adapter = pickAdapter(conv.agentKind);
+      const launchCommand = resolveLaunchCommand(conv, project);
+      const cmd = adapter.locateTranscript(conv.sessionId, req.user!.unixUser, project.path) !== null
+        ? adapter.buildResumeCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort, askLaunch: ctx.askLaunchFor(req.user!.unixUser) })
+        : adapter.buildLaunchCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort, askLaunch: ctx.askLaunchFor(req.user!.unixUser) });
       try {
         await targetTmux.newDetached(conv.tmuxName, project.path, cmd, cols, rows);
       } catch (e) {
@@ -441,11 +448,11 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       if (!(await targetTmux.hasSession(conv.tmuxName))) {
         const newSid = crypto.randomUUID();
         ctx.conversations.update(cid, { sessionId: newSid });
-        const cmd2 = buildClaudeCmd({
-          launchCommand: project.launchCommand,
+        // 新 sid 必然无 transcript → 走 buildLaunchCmd(首次启动路径)。
+        const cmd2 = adapter.buildLaunchCmd({
+          launchCommand,
           sessionId: newSid,
           effort: conv.effort,
-          hasTranscript: false,
           askLaunch: ctx.askLaunchFor(req.user!.unixUser),
         });
         try {
@@ -481,10 +488,16 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       const cols = Math.max(parseInt(q.cols ?? '80', 10) || 80, 2);
       const rows = Math.max(parseInt(q.rows ?? '24', 10) || 24, 2);
 
-      // 终端视图也带 sessionId 启动（保证切到聊天视图能定位 transcript）；
-      // 关键：已用过(transcript 存在)必须 --resume，否则 --session-id 会因
+      // 终端视图也带 sessionId 启动（保证切到聊天视图能定位 transcript）；走 adapter:
+      // 关键：已用过(transcript 存在)必须走 resume，否则 --session-id 会因
       // "Session ID already in use" 报错退出，表现为每次重启都打开新的。
-      const command = `${project.launchCommand} ${effortFlag(conv.effort)} ${launchFlag(conv.sessionId, projectsDirFor(user.unixUser, ctx.config.serviceUser))}`;
+      // 终端 WS 不传 askLaunch:沿用现状(终端模式 hook 是聊天专属)。
+      const adapter = pickAdapter(conv.agentKind);
+      const launchCommand = resolveLaunchCommand(conv, project);
+      const hasTranscript = adapter.locateTranscript(conv.sessionId, user.unixUser, project.path) !== null;
+      const command = hasTranscript
+        ? adapter.buildResumeCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort })
+        : adapter.buildLaunchCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort });
       const handle = ctx.registry.subscribe(
         cid,
         // 多用户隔离 2026-06-24:必须把登录身份的 unixUser 透给 BridgeSpec,
