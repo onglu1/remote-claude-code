@@ -97,9 +97,14 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       }
       // 显式指定 sessionId 时:首次拉起 ensure() 会检测 transcript 已存在 → --resume,接续旧对话。
       // agentKind/launchCommand 透传 ConversationStore(缺省 claude + 走 adapter 默认,行为零变化)。
+      // codex + 用户显式传 sessionId:置 codexSessionDiscovered=true,跳过 chatSession 启动后
+      // 5min 扫描真实 UUID(因为传入的就是真实的)、让 hasTranscript 直接信任并走 resume 命令。
+      const explicitCodexResume =
+        !!parse.data.sessionId && (parse.data.agentKind ?? 'claude') === 'codex';
       const conv = ctx.conversations.create(id, parse.data.name ?? '', parse.data.sessionId, {
         agentKind: parse.data.agentKind,
         launchCommand: parse.data.launchCommand,
+        codexSessionDiscovered: explicitCodexResume,
       });
       return { conversation: { ...conv, alive: false } };
     },
@@ -248,7 +253,11 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       // 走 adapter:claude 输出与既有 buildClaudeCmd 一字不差;codex 拼 codex 子命令。
       const adapter = pickAdapter(conv.agentKind);
       const launchCommand = resolveLaunchCommand(conv, project);
-      const hasTranscript = adapter.locateTranscript(conv.sessionId, req.user!.unixUser, project.path) !== null;
+      // codex 显式 discovered(用户传入续接的真实 UUID 或首次扫到回写过)兜底走 resume——
+      // 即使本地扫不到文件,也用 `codex resume --yolo <UUID>` 让 CLI 自己定位,失败它会报。
+      const hasTranscript =
+        adapter.locateTranscript(conv.sessionId, req.user!.unixUser, project.path) !== null ||
+        conv.codexSessionDiscovered === true;
       // askLaunch 仅 claude 有意义(codex adapter 内部忽略);不按 capability 分支,逻辑一致。
       const askLaunch = ctx.askLaunchFor(req.user!.unixUser);
       const cmd = hasTranscript
@@ -426,7 +435,11 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       const targetTmux = ctx.getTmux(req.user!.unixUser);
       const adapter = pickAdapter(conv.agentKind);
       const launchCommand = resolveLaunchCommand(conv, project);
-      const cmd = adapter.locateTranscript(conv.sessionId, req.user!.unixUser, project.path) !== null
+      // codex 显式 discovered 兜底走 resume(同 /resume 路由的判断,见上文)。
+      const hasTranscript =
+        adapter.locateTranscript(conv.sessionId, req.user!.unixUser, project.path) !== null ||
+        conv.codexSessionDiscovered === true;
+      const cmd = hasTranscript
         ? adapter.buildResumeCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort, askLaunch: ctx.askLaunchFor(req.user!.unixUser) })
         : adapter.buildLaunchCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort, askLaunch: ctx.askLaunchFor(req.user!.unixUser) });
       try {
@@ -494,7 +507,10 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       // 终端 WS 不传 askLaunch:沿用现状(终端模式 hook 是聊天专属)。
       const adapter = pickAdapter(conv.agentKind);
       const launchCommand = resolveLaunchCommand(conv, project);
-      const hasTranscript = adapter.locateTranscript(conv.sessionId, user.unixUser, project.path) !== null;
+      // codex 显式 discovered 兜底走 resume(同 /resume 路由的判断)。
+      const hasTranscript =
+        adapter.locateTranscript(conv.sessionId, user.unixUser, project.path) !== null ||
+        conv.codexSessionDiscovered === true;
       const command = hasTranscript
         ? adapter.buildResumeCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort })
         : adapter.buildLaunchCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort });

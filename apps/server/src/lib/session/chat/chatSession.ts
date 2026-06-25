@@ -65,6 +65,12 @@ export interface ChatSpec {
    * 仅在 adapter.capabilities.presetSessionId=false 时可能被调。
    */
   onSessionIdResolved?: (sessionId: string) => void;
+  /**
+   * codex 专属:sessionId 是否已是真实(用户显式传入续接的 UUID,或首次启动后扫到回写过)。
+   * true 时 ensure 跳过 discoverAndPersistSessionId(不必再扫文件);
+   * 也用于让 hasTranscript 兜底信任 codex UUID(即使本地文件还没出现,也走 resume 命令)。
+   */
+  codexSessionDiscovered?: boolean;
 }
 
 export interface TmuxLike {
@@ -214,7 +220,8 @@ export class ChatSession {
 
       // codex 不能预指定 UUID（presetSessionId=false）：首次启动后异步扫真实 UUID 并回写。
       // claude（presetSessionId=true）跳过——它的 UUID 启动时已经 --session-id 传死。
-      if (!this.deps.adapter.capabilities.presetSessionId) {
+      // codexSessionDiscovered=true（用户显式传入续接的真实 UUID）也跳过——值已经是真,不必再扫。
+      if (!this.deps.adapter.capabilities.presetSessionId && !this.spec.codexSessionDiscovered) {
         // .catch 防静默:onSessionIdResolved 会触发路由层落盘 I/O(Task 11),将来若抛
         // 而无人 await,会变成 unhandled rejection 且"sessionId 未回写→tail 永远指占位
         // →聊天历史空白"无任何日志。这里至少留 stderr 一行排障线索。

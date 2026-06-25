@@ -86,13 +86,15 @@ export class ConversationStore {
    * @param sessionId 可选:指定一个已存在的 claude session UUID,新会话会以 --resume 接续那段 transcript。
    *                  缺省时随机生成新 UUID(首次启动用 --session-id)。
    * @param opts 可选:agent 选择与会话级 launchCommand。
-   *             agentKind 缺省 'claude';launchCommand 缺省 undefined(走 adapter 默认)。
+   *             agentKind 缺省 'claude';launchCommand 缺省 undefined(走 adapter 默认);
+   *             codexSessionDiscovered 缺省 false(codex 路径下首次启动后扫到再回写)——
+   *             用户显式传入续接的真实 codex UUID 时,路由层可置 true 跳过扫描。
    */
   create(
     projectId: string,
     name: string,
     sessionId?: string,
-    opts?: { agentKind?: AgentKind; launchCommand?: string },
+    opts?: { agentKind?: AgentKind; launchCommand?: string; codexSessionDiscovered?: boolean },
   ): StoredConversation {
     const all = this.loadAll();
     const id = crypto.randomBytes(4).toString('hex');
@@ -112,7 +114,8 @@ export class ConversationStore {
       // 会话级 launchCommand:留空 = 走 adapter 默认(claude 用 Project.launchCommand;codex 用全局常量)。
       launchCommand: opts?.launchCommand,
       // codex 会话 UUID 首次发现后才回写为 true;claude 恒为 false(用不上)。
-      codexSessionDiscovered: false,
+      // 用户显式传入续接的 codex UUID 时,opts.codexSessionDiscovered=true 跳过扫描。
+      codexSessionDiscovered: opts?.codexSessionDiscovered ?? false,
       createdAt: new Date().toISOString(),
       // lastActivityAt 与 createdAt 相同,便于前端按"最近活跃"排序时新会话也有值。
       lastActivityAt: new Date().toISOString(),

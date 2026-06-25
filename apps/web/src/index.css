@@ -2078,6 +2078,22 @@ select.input {
   background: var(--surface-sunken);
   word-break: break-all;
 }
+.nc-hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+  margin: 4px 0 0;
+}
+.nc-error {
+  color: var(--warn, #b45309);
+}
+.nc-row input[aria-invalid="true"] {
+  border-color: var(--warn, #b45309);
+}
+.nc-actions button.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .nc-actions {
   display: flex;
   gap: var(--sp-2);

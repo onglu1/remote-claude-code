@@ -176,8 +176,11 @@ export async function buildContext(config: Config): Promise<AppContext> {
         scrape: scrapePane,
         tail,
         adapter,
+        // codex 显式 discovered 兜底:即使本地扫不到 jsonl,也信任用户传入的真实 UUID 走 resume
+        // (与 routes/sessions.ts resume/reflow/stream 三处判断一致)。
         hasTranscript: () =>
-          adapter.locateTranscript(spec.sessionId, effectiveUnixUser, spec.cwd) !== null,
+          adapter.locateTranscript(spec.sessionId, effectiveUnixUser, spec.cwd) !== null ||
+          spec.codexSessionDiscovered === true,
         // claude 专属横切:按 capability 决定是否注入。codex(capabilities 全 false)
         // 一律传 undefined,等价于既有"未配 hook/sidecar"的安全路径,chatSession 自然跳过。
         // ── HUD 用量(statusLine sidecar)──

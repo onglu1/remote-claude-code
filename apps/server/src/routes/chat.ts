@@ -115,6 +115,9 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
         unixUser: user.unixUser,
         // agent 类型(老数据缺 → schema 回填 'claude')。
         agentKind: conv.agentKind,
+        // codex 显式 discovered(用户传入续接的真实 UUID,或首次扫到回写过):
+        // 让 ChatSession.ensure 跳过 5min 扫描、hasTranscript 直接信任并走 resume。
+        codexSessionDiscovered: conv.codexSessionDiscovered === true,
         // codex 首次启动后 ChatSession 异步扫到真实 UUID 时回写(claude 路径 presetSessionId=true,
         // 永不触发,行为零变化):落盘 sessionId + 置 codexSessionDiscovered=true,供后端重启 resume 接续。
         onSessionIdResolved: (real: string) => {

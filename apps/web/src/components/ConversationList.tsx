@@ -49,9 +49,9 @@ export function ConversationList({
     }
   }, [editingId]);
 
-  // 新建会话:opts 由 NewConversationDialog 提交(agent/名称/启动命令);
+  // 新建会话:opts 由 NewConversationDialog 提交(agent/名称/启动命令/续接 UUID);
   // 留空字段交后端 adapter 兜底。沿用既有 busy 锁 + loadActive 刷新 + onOpen 直接进入。
-  const create = async (opts?: { name?: string; agentKind?: AgentKind; launchCommand?: string }) => {
+  const create = async (opts?: { name?: string; agentKind?: AgentKind; launchCommand?: string; sessionId?: string }) => {
     if (busy) return;
     setBusy(true);
     try {
