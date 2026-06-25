@@ -4,6 +4,10 @@
  * ChatSession 与路由层不再硬编码 agent 字样。
  */
 import type { AgentKind, ChatMessage, EffortLevel } from '@rcc/shared';
+// ToolUseEvent 复用 activity.ts 的既有定义（单一真相源；activity.ts 是无依赖叶子模块，
+// 这里 import type 不会触发循环）。后续 claudeAdapter 也会 import activity.parseToolUseEvents。
+import type { ToolUseEvent } from '../../activity';
+export type { ToolUseEvent };
 
 /** 拼"首次启动"命令的入参（无 transcript 时）。 */
 export interface LaunchOpts {
@@ -22,17 +26,17 @@ export interface ResumeOpts {
   askLaunch?: { envExport: string; settingsArg: string };
 }
 
-/** transcript 增量解析出的"工具调用开/闭"事件（IdleSweeper 信号 ① 用）。 */
-export interface ToolUseEvent {
-  kind: 'open' | 'close';
-  id: string;
-  sidechain: boolean;
-}
-
-/** chatSession.ts 既有 TranscriptLike 接口的 re-export（避免循环 import）。 */
+/**
+ * chatSession.ts 既有 TranscriptLike 接口的同形声明。
+ * 留在这里是为了避免 adapter.ts → chatSession.ts 的反向 import 在 Task 8
+ * (chatSession 改用 adapter) 落地后形成循环。Task 8 时把真身上移到本文件、消掉副本。
+ */
 export interface TranscriptLike {
+  /** 当前活动分支(claude 按 parentUuid 回溯,codex 线性按时间顺序);正序的可渲染消息。 */
   activeChain(): ChatMessage[];
+  /** 最后写入的主线 assistant 条目的 message.usage(HUD transcript 兜底数据源用);无则 null。 */
   lastAssistantUsage?(): Record<string, unknown> | null;
+  /** 重置偏移与累积树(重连/全量重读用)。 */
   reset(): void;
 }
 
