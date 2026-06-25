@@ -11,6 +11,7 @@ import type {
   ScrollbackChunk,
   Folder,
   SubUser,
+  AgentKind,
 } from '@rcc/shared';
 
 export interface FileContent {
@@ -147,10 +148,14 @@ export const api = {
     req<{ conversations: Conversation[] }>('GET', `/api/projects/${pid}/conversations/trash`),
   /**
    * 新建会话。
-   * @param opts.sessionId 给定时:用这个 claude session UUID 起会话,首次拉起即 --resume 接续。
+   * @param opts.sessionId 给定时:用这个 claude session UUID 起会话,首次拉起即 --resume 接续(codex 不读此字段)。
+   * @param opts.agentKind agent 类型;缺省走后端默认('claude')。
+   * @param opts.launchCommand 会话级启动命令;留空走 adapter 默认(claude=项目 launchCommand,codex=全局常量)。
    */
-  createConversation: (pid: string, opts: { name?: string; sessionId?: string } = {}) =>
-    req<{ conversation: Conversation }>('POST', `/api/projects/${pid}/conversations`, opts),
+  createConversation: (
+    pid: string,
+    opts: { name?: string; sessionId?: string; agentKind?: AgentKind; launchCommand?: string } = {},
+  ) => req<{ conversation: Conversation }>('POST', `/api/projects/${pid}/conversations`, opts),
   renameConversation: (pid: string, cid: string, name: string) =>
     req<{ conversation: Conversation }>('PATCH', `/api/projects/${pid}/conversations/${cid}`, {
       name,
