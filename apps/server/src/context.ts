@@ -1,5 +1,6 @@
 import { readFileSync, statSync, unlinkSync, mkdirSync, chmodSync } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import argon2 from 'argon2';
 import type { Config } from './config';
 import { ProjectStore } from './lib/projects';
@@ -13,8 +14,8 @@ import { makeRealBridgeFactory } from './lib/session/ptyBridge';
 import { ChatRegistry } from './lib/session/chat/chatRegistry';
 import { ChatSession } from './lib/session/chat/chatSession';
 import { scrapePane } from './lib/session/chat/paneScraper';
-import { TranscriptTail, locateTranscript, projectsDirFor } from './lib/session/chat/transcript';
 import { makeClaudeAdapter } from './lib/session/chat/agent/claudeAdapter';
+import { makeCodexAdapter } from './lib/session/chat/agent/codexAdapter';
 import { ensureAskHookSettings, askLaunchExtra } from './lib/session/chat/askHookSettings';
 import { readPendingAsk, askSidecarPath } from './lib/session/chat/askSidecar';
 import { ResearchProviderRegistry } from './lib/researchProvider';
@@ -148,46 +149,65 @@ export async function buildContext(config: Config): Promise<AppContext> {
     return dir;
   }
 
+  // 两个 agent 适配器各创建一次缓存复用(无 per-session 状态,工厂内按 agentKind 选其一)。
+  // claude 全能力开、命令输出与既有 buildClaudeCmd 一字不差,故 claude 路径行为零变化;
+  // codex capabilities 全 false,横切 deps(hud/askHook)都不会注入(见工厂内 capability 判定)。
+  const claudeAdapter = makeClaudeAdapter(config.serviceUser);
+  const codexAdapter = makeCodexAdapter({
+    serviceUser: config.serviceUser,
+    // 给 unix 用户名 → HOME:ServiceUser 用进程 HOME,其余按 /home/<user> 约定
+    // (与 projectsDirFor 的跨用户 home 解析同源)。
+    homeFor: (u: string) => (u === config.serviceUser ? os.homedir() : `/home/${u}`),
+  });
+
   const chatRegistry = new ChatRegistry((spec, events) => {
     // 多用户:每个 spec 带 unixUser(老 spec 缺则回退 ServiceUser,过渡兼容)。
-    const effectiveUnixUser = (spec as { unixUser?: string }).unixUser ?? config.serviceUser;
+    const effectiveUnixUser = spec.unixUser ?? config.serviceUser;
     const perUserTmux = getTmux(effectiveUnixUser);
-    const perUserAskLaunch = askLaunchFor(effectiveUnixUser);
-    const userAskDir = path.join(config.askDir, effectiveUnixUser);
-    // 走 statuslineDirFor 触发 ensureWritableForAll,保证子目录 1777
-    // (跨 unix hook 进程能写 sidecar,后端再读出 HUD 数据)。
-    const userStatuslineDir = statuslineDirFor(effectiveUnixUser);
-    // 多用户隔离:transcript 路径走目标 unix 用户 home,
-    // 不走 ServiceUser home(否则 zhangrengang claude 写的 jsonl 永远找不到)。
-    const projectsDir = projectsDirFor(effectiveUnixUser, config.serviceUser);
-    const tail = new TranscriptTail(() => locateTranscript(spec.sessionId, projectsDir));
+    // 按会话 agentKind 选适配器:transcript 定位/tail、启动命令、capabilities 全随之而变。
+    const adapter = spec.agentKind === 'codex' ? codexAdapter : claudeAdapter;
+    // tail / hasTranscript 都委托给 adapter:claude 扫 ~/.claude/projects/*,
+    // codex 扫 ~/.codex/sessions/YYYY/MM/DD/*,context 不再手动 new TranscriptTail。
+    const tail = adapter.makeTranscriptTail(spec.sessionId, effectiveUnixUser, spec.cwd);
     return new ChatSession(
       spec,
       {
         tmux: perUserTmux,
         scrape: scrapePane,
         tail,
-        hasTranscript: () => locateTranscript(spec.sessionId, projectsDir) !== null,
-        // capability 化注入(Task 8):当前仅 claude 一种行为,故注入 claude adapter
-        // (全能力开,命令输出与既有 buildClaudeCmd 一致,行为零变化)。
-        // Task 9 在此处改为按 spec.agentKind 选 claude/codex adapter。
-        adapter: makeClaudeAdapter(config.serviceUser),
-        statuslineDir: userStatuslineDir,
-        readSidecar: (p: string) => {
-          const content = readFileSync(p, 'utf8');
-          const { mtimeMs } = statSync(p);
-          return { content, mtimeMs };
-        },
-        askDir: userAskDir,
-        askLaunch: perUserAskLaunch,
-        readAskSidecar: readPendingAsk,
-        cleanAskSidecar: (dir, sessionId) => {
-          try {
-            unlinkSync(askSidecarPath(dir, sessionId));
-          } catch {
-            /* 文件不存在是常态:不打日志 */
-          }
-        },
+        adapter,
+        hasTranscript: () =>
+          adapter.locateTranscript(spec.sessionId, effectiveUnixUser, spec.cwd) !== null,
+        // claude 专属横切:按 capability 决定是否注入。codex(capabilities 全 false)
+        // 一律传 undefined,等价于既有"未配 hook/sidecar"的安全路径,chatSession 自然跳过。
+        // ── HUD 用量(statusLine sidecar)──
+        ...(adapter.capabilities.hud
+          ? {
+              // 走 statuslineDirFor 触发 ensureWritableForAll,保证子目录 1777
+              // (跨 unix hook 进程能写 sidecar,后端再读出 HUD 数据)。
+              statuslineDir: statuslineDirFor(effectiveUnixUser),
+              readSidecar: (p: string) => {
+                const content = readFileSync(p, 'utf8');
+                const { mtimeMs } = statSync(p);
+                return { content, mtimeMs };
+              },
+            }
+          : {}),
+        // ── AskUserQuestion hook ──
+        ...(adapter.capabilities.askHook
+          ? {
+              askDir: path.join(config.askDir, effectiveUnixUser),
+              askLaunch: askLaunchFor(effectiveUnixUser),
+              readAskSidecar: readPendingAsk,
+              cleanAskSidecar: (dir: string, sessionId: string) => {
+                try {
+                  unlinkSync(askSidecarPath(dir, sessionId));
+                } catch {
+                  /* 文件不存在是常态:不打日志 */
+                }
+              },
+            }
+          : {}),
       },
       events,
     );
