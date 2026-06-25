@@ -10,6 +10,7 @@ import type { ChatHandle } from '../lib/session/chat/chatRegistry';
 import { COOKIE_NAME } from '../lib/auth';
 import { makeRequireAuth, resolveUser } from '../plugins/requireAuth';
 import { canSeeProject } from '../lib/authz';
+import { resolveLaunchCommand } from '../lib/session/chat/agent/resolveLaunchCommand';
 
 const UPLOAD_DIR = path.join(os.tmpdir(), 'rcc-uploads');
 /** 单文件上限:手机相机直出大约 5–10MB,留 30MB 余量;超出在路由层 bodyLimit 兜底拒绝。 */
@@ -103,16 +104,25 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
       const spec = {
         tmuxName: conv.tmuxName,
         cwd: project.path,
-        launchCommand: project.launchCommand,
+        // 会话级 launchCommand 覆盖优先,缺省回退 agent 默认(codex 用 CODEX_DEFAULT_LAUNCH、
+        // claude 用 project.launchCommand);二级回退逻辑收敛在 resolveLaunchCommand,各启动路径共用。
+        launchCommand: resolveLaunchCommand(conv, project),
         sessionId: conv.sessionId,
         effort: conv.effort,
         cols: 120,
         rows: 40,
         // 多用户隔离:tmux/claude 以登录身份的 unix 用户跑(默认主账号 unixUser;子用户继承父)。
         unixUser: user.unixUser,
-        // agent 类型(老数据缺 → schema 回填 'claude')。Task 11 在此补 launchCommand 解析与
-        // onSessionIdResolved 回调(codex 回写真实 UUID);本期先填 agentKind 满足 ChatSpec。
+        // agent 类型(老数据缺 → schema 回填 'claude')。
         agentKind: conv.agentKind,
+        // codex 首次启动后 ChatSession 异步扫到真实 UUID 时回写(claude 路径 presetSessionId=true,
+        // 永不触发,行为零变化):落盘 sessionId + 置 codexSessionDiscovered=true,供后端重启 resume 接续。
+        onSessionIdResolved: (real: string) => {
+          ctx.conversations.update(conv.id, {
+            sessionId: real,
+            codexSessionDiscovered: true,
+          });
+        },
       };
 
       let handle: ChatHandle | null = null;
