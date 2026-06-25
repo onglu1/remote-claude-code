@@ -156,6 +156,11 @@ export function ChatView({
     }
   }, [live, livePending]);
 
+  // claude 专属能力开关:Hud / EffortPill / RewindPanel / LiveAskCard 仅 claude 会话渲染。
+  // codex 会话这些横切能力(用量 HUD、effort、rewind、AskUserQuestion hook)不适用,故隐藏;
+  // Composer / KeyBar / 消息列表 / SlashPalette 为通用能力,对 codex 仍保留。
+  const isClaude = conversation.agentKind === 'claude';
+
   // 实时缓冲的工具配对(展开的历史回合各自配对,见 ChatHistory)。
   const toolResults = useMemo(() => collectToolResults(live), [live]);
 
@@ -225,21 +230,25 @@ export function ChatView({
             {project.name}
           </small>
         </div>
-        <EffortPill
-          level={effort}
-          onPick={(l) => {
-            setEffort(l);
-            sockRef.current?.send({ type: 'set_effort', level: l });
-          }}
-        />
-        <button
-          className="btn ghost sm"
-          disabled={running}
-          title="回退到检查点"
-          onClick={() => sockRef.current?.send({ type: 'rewind_open' })}
-        >
-          回退
-        </button>
+        {isClaude && (
+          <EffortPill
+            level={effort}
+            onPick={(l) => {
+              setEffort(l);
+              sockRef.current?.send({ type: 'set_effort', level: l });
+            }}
+          />
+        )}
+        {isClaude && (
+          <button
+            className="btn ghost sm"
+            disabled={running}
+            title="回退到检查点"
+            onClick={() => sockRef.current?.send({ type: 'rewind_open' })}
+          >
+            回退
+          </button>
+        )}
         {running && (
           <button className="btn ghost sm" onClick={interrupt}>
             停止
@@ -287,11 +296,13 @@ export function ChatView({
         )}
       </div>
 
-      {hud && <Hud {...hud} />}
+      {isClaude && hud && <Hud {...hud} />}
 
       <div className="chat-scroll" ref={scrollRef}>
         {history.length === 0 && turns.length === 0 && !preview && !running && (
-          <div className="empty">原生 Claude Code 会话已就绪。发条消息开始吧。</div>
+          <div className="empty">
+            {isClaude ? '原生 Claude Code 会话已就绪。发条消息开始吧。' : '会话已就绪。发条消息开始吧。'}
+          </div>
         )}
         <ChatHistory
           items={history}
@@ -302,7 +313,7 @@ export function ChatView({
           onAnswerAsk={sendAskAnswer}
         />
         <TurnList turns={turns} toolResults={toolResults} askStates={askStates} onAnswerAsk={sendAskAnswer} />
-        {livePending && (
+        {isClaude && livePending && (
           <LiveAskCard
             options={livePending.options}
             multiSelect={livePending.multiSelect}
@@ -332,7 +343,7 @@ export function ChatView({
               ⏺
             </span>
             <div className="assistant-body working">
-              Claude 正在思考
+              {isClaude ? 'Claude 正在思考' : '正在思考'}
               <span className="dots" aria-hidden>
                 <i />
                 <i />
@@ -346,7 +357,7 @@ export function ChatView({
       <Composer projectId={project.id} convId={conversation.id} onSend={sendText} />
       <KeyBar onKey={sendKey} />
 
-      {rewindItems !== null && (
+      {isClaude && rewindItems !== null && (
         <RewindPanel
           items={rewindItems}
           busy={rewindBusy}
