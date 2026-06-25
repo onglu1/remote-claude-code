@@ -4,6 +4,10 @@ import { z } from 'zod';
 export const ProjectTypeSchema = z.enum(['dev', 'research']);
 export type ProjectType = z.infer<typeof ProjectTypeSchema>;
 
+/** Agent 类型;影响启动命令拼接、transcript 解析、聊天侧能力开关。 */
+export const AgentKindSchema = z.enum(['claude', 'codex']);
+export type AgentKind = z.infer<typeof AgentKindSchema>;
+
 /**
  * 用户角色：管理员看全部+管理用户；普通用户只看自己的项目/会话。
  * 这是「应用层账号」分类（为视图干净），非安全边界。
@@ -142,8 +146,37 @@ export const ConversationSchema = z.object({
   lastActivityAt: z.string().optional(),
   /** 空闲自动关闭时间戳(ISO);存在=休眠中,resume 后清空。 */
   closedAt: z.string().optional(),
+  /**
+   * agent 类型;老数据缺 → 'claude'(回填)。
+   * 决定启动命令、transcript 解析、HUD/AskHook/effort/rewind 等横切能力。
+   */
+  agentKind: AgentKindSchema.default('claude'),
+  /**
+   * 会话级 launchCommand;留空 = 走 adapter 默认。
+   * claude 默认走 Project.launchCommand;codex 默认走全局常量 'codex --yolo'。
+   */
+  launchCommand: z.string().min(1).optional(),
+  /**
+   * codex 专属辅助:首次启动后是否扫到真实 UUID 并回写。
+   * false/缺省=尚未发现;true=可直接 `codex resume <UUID>`。
+   */
+  codexSessionDiscovered: z.boolean().default(false),
 });
 export type Conversation = z.infer<typeof ConversationSchema>;
+
+/** 新建会话入参 zod schema;路由层 body 用。 */
+export const ConversationCreateSchema = z.object({
+  name: z.string().optional(),
+  agentKind: AgentKindSchema.optional(),
+  launchCommand: z.string().min(1).optional(),
+  /** 可选:用一个已存在的 claude session UUID 续接(老逻辑)。codex 不读此字段。 */
+  sessionId: z
+    .string()
+    .trim()
+    .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, '需要标准 UUID 格式')
+    .optional(),
+});
+export type ConversationCreate = z.infer<typeof ConversationCreateSchema>;
 
 /** 会话文件夹;按项目+用户隔离,平铺一层(不嵌套)。 */
 export const FolderSchema = z.object({

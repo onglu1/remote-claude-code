@@ -3,6 +3,8 @@ import {
   ProjectSchema,
   EffortLevelSchema,
   ConversationSchema,
+  ConversationCreateSchema,
+  AgentKindSchema,
   RoleSchema,
   UserSchema,
   SubUserSchema,
@@ -277,5 +279,58 @@ describe('decodeClientMessage', () => {
   it('非法返回 null', () => {
     expect(decodeClientMessage('not json')).toBeNull();
     expect(decodeClientMessage('{"type":"bogus"}')).toBeNull();
+  });
+});
+
+describe('AgentKindSchema', () => {
+  it('accepts claude and codex', () => {
+    expect(AgentKindSchema.parse('claude')).toBe('claude');
+    expect(AgentKindSchema.parse('codex')).toBe('codex');
+  });
+  it('rejects other strings', () => {
+    expect(() => AgentKindSchema.parse('gemini')).toThrow();
+  });
+});
+
+describe('ConversationSchema agentKind/launchCommand 字段', () => {
+  const base = {
+    id: 'a1',
+    projectId: 'p',
+    name: 'demo',
+    tmuxName: 't',
+    sessionId: '11111111-1111-1111-1111-111111111111',
+    alive: true,
+    createdAt: '2026-06-25T00:00:00.000Z',
+  };
+  it('agentKind 缺省回填 claude', () => {
+    const c = ConversationSchema.parse({ ...base });
+    expect(c.agentKind).toBe('claude');
+  });
+  it('agentKind 显式 codex 通过', () => {
+    const c = ConversationSchema.parse({ ...base, agentKind: 'codex' });
+    expect(c.agentKind).toBe('codex');
+  });
+  it('launchCommand 可选;非空字符串通过、空串拒', () => {
+    expect(ConversationSchema.parse({ ...base }).launchCommand).toBeUndefined();
+    expect(ConversationSchema.parse({ ...base, launchCommand: 'codex --yolo' }).launchCommand).toBe('codex --yolo');
+    expect(() => ConversationSchema.parse({ ...base, launchCommand: '' })).toThrow();
+  });
+  it('codexSessionDiscovered 缺省 false', () => {
+    expect(ConversationSchema.parse({ ...base }).codexSessionDiscovered).toBe(false);
+  });
+});
+
+describe('ConversationCreateSchema', () => {
+  it('全可选;空对象通过', () => {
+    expect(ConversationCreateSchema.parse({})).toEqual({});
+  });
+  it('agentKind/launchCommand 透传', () => {
+    const c = ConversationCreateSchema.parse({ agentKind: 'codex', launchCommand: 'codex --yolo' });
+    expect(c.agentKind).toBe('codex');
+    expect(c.launchCommand).toBe('codex --yolo');
+  });
+  it('sessionId 必须是 UUID 格式', () => {
+    expect(() => ConversationCreateSchema.parse({ sessionId: 'not-uuid' })).toThrow();
+    expect(ConversationCreateSchema.parse({ sessionId: '11111111-1111-1111-1111-111111111111' }).sessionId).toBeTruthy();
   });
 });
