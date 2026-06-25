@@ -110,6 +110,9 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
         rows: 40,
         // 多用户隔离:tmux/claude 以登录身份的 unix 用户跑(默认主账号 unixUser;子用户继承父)。
         unixUser: user.unixUser,
+        // agent 类型(老数据缺 → schema 回填 'claude')。Task 11 在此补 launchCommand 解析与
+        // onSessionIdResolved 回调(codex 回写真实 UUID);本期先填 agentKind 满足 ChatSpec。
+        agentKind: conv.agentKind,
       };
 
       let handle: ChatHandle | null = null;

@@ -12,6 +12,7 @@ import { Tmux } from '../src/lib/session/tmux';
 import { ChatSession } from '../src/lib/session/chat/chatSession';
 import { scrapePane } from '../src/lib/session/chat/paneScraper';
 import { TranscriptTail, locateTranscript } from '../src/lib/session/chat/transcript';
+import { makeClaudeAdapter } from '../src/lib/session/chat/agent/claudeAdapter';
 import type { ChatMessage } from '@rcc/shared';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -26,8 +27,8 @@ async function main() {
   const messages: ChatMessage[] = [];
   const tail = new TranscriptTail(() => locateTranscript(sessionId));
   const session = new ChatSession(
-    { tmuxName: NAME, cwd: work, launchCommand: 'claude --dangerously-skip-permissions', sessionId, cols: 120, rows: 40 },
-    { tmux, scrape: scrapePane, tail, hasTranscript: () => locateTranscript(sessionId) !== null, idleLimit: 6 },
+    { tmuxName: NAME, cwd: work, launchCommand: 'claude --dangerously-skip-permissions', sessionId, cols: 120, rows: 40, agentKind: 'claude' },
+    { tmux, scrape: scrapePane, tail, hasTranscript: () => locateTranscript(sessionId) !== null, adapter: makeClaudeAdapter(process.env.USER ?? ''), idleLimit: 6 },
     {
       onMessage: (m) => messages.push(m),
       onHistory: (ms) => {

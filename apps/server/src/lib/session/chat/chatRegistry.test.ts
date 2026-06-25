@@ -11,6 +11,7 @@ const spec: ChatSpec = {
   sessionId: 'u-1',
   cols: 120,
   rows: 40,
+  agentKind: 'claude',
 };
 
 function fakeSession(messages: ChatMessage[] = [], liveAsk: AskPending | null = null, liveHud: Hud | null = null) {

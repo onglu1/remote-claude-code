@@ -3,6 +3,7 @@ import { ChatSession, type ChatSpec, type TmuxLike, type TranscriptLike } from '
 import { scrapePane } from './paneScraper';
 import type { AskHookPending } from './askSidecar';
 import type { ChatMessage } from '@rcc/shared';
+import type { AgentAdapter } from './agent/adapter';
 
 const spec: ChatSpec = {
   tmuxName: 'rcc-p-c',
@@ -11,7 +12,47 @@ const spec: ChatSpec = {
   sessionId: 'u-123',
   cols: 120,
   rows: 40,
+  agentKind: 'claude',
 };
+
+/**
+ * fake claude adapter:capabilities 全开,buildLaunchCmd/buildResumeCmd 复刻 buildClaudeCmd
+ * 的输出格式(`<launchCommand> --effort <e> --session-id/--resume <sid>` + 可选 askLaunch
+ * env/settings)。既有 50+ claude 测试经此 helper 注入,断言命令字符串照旧成立 → claude 行为零变化。
+ */
+function makeFakeClaudeAdapter(): AgentAdapter {
+  const effortFlag = (e?: string) => `--effort ${e ?? 'max'}`;
+  const wrap = (o: { launchCommand: string; sessionId: string; effort?: string; askLaunch?: { envExport: string; settingsArg: string } }, idFlag: string) => {
+    const pre = o.askLaunch?.envExport ?? '';
+    const post = o.askLaunch ? ` ${o.askLaunch.settingsArg}` : '';
+    return `${pre}${o.launchCommand} ${effortFlag(o.effort)} ${idFlag}${post}`;
+  };
+  return {
+    kind: 'claude',
+    capabilities: { effort: true, askHook: true, hud: true, rewind: true, presetSessionId: true },
+    buildLaunchCmd: (o) => wrap(o, `--session-id ${o.sessionId}`),
+    buildResumeCmd: (o) => wrap(o, `--resume ${o.sessionId}`),
+    locateTranscript: () => null,
+    makeTranscriptTail: () => ({ activeChain: () => [], reset: () => {/* noop */} }),
+    discoverSessionId: async (o) => o.tentativeSessionId,
+    parseToolUseEvents: () => [],
+  };
+}
+
+/** fake codex adapter:capabilities 全关。buildLaunchCmd 透传 launchCommand,resume 固定模板。 */
+function makeFakeCodexAdapter(overrides: Partial<AgentAdapter> = {}): AgentAdapter {
+  return {
+    kind: 'codex',
+    capabilities: { effort: false, askHook: false, hud: false, rewind: false, presetSessionId: false },
+    buildLaunchCmd: (o) => o.launchCommand,
+    buildResumeCmd: (o) => `codex resume --yolo ${o.sessionId}`,
+    locateTranscript: () => null,
+    makeTranscriptTail: () => ({ activeChain: () => [], reset: () => {/* noop */} }),
+    discoverSessionId: async (o) => o.tentativeSessionId,
+    parseToolUseEvents: () => [],
+    ...overrides,
+  };
+}
 
 function fakeTmux(over: Partial<TmuxLike> = {}): TmuxLike & { calls: any } {
   const calls = { newDetached: [] as any[], sendKeys: [] as any[], pasteText: [] as any[] };
@@ -70,21 +111,21 @@ function fakeAsk(over: Record<string, any> = {}) {
 describe('ChatSession.ensure', () => {
   it('无 tmux 会话且无 transcript → --session-id 新建（含 --effort）', async () => {
     const tmux = fakeTmux();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, events());
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, events());
     await s.ensure();
     expect(tmux.calls.newDetached[0][2]).toBe('Fable-yolo --effort max --session-id u-123');
   });
 
   it('无 tmux 会话但有 transcript → --resume（含 --effort）', async () => {
     const tmux = fakeTmux();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => true }, events());
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => true, adapter: makeFakeClaudeAdapter() }, events());
     await s.ensure();
     expect(tmux.calls.newDetached[0][2]).toBe('Fable-yolo --effort max --resume u-123');
   });
 
   it('spec.effort 反映到命令（--effort 在 idFlag 之前）', async () => {
     const tmux = fakeTmux();
-    const s = new ChatSession({ ...spec, effort: 'high' }, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, events());
+    const s = new ChatSession({ ...spec, effort: 'high' }, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, events());
     await s.ensure();
     expect(tmux.calls.newDetached[0][2]).toBe('Fable-yolo --effort high --session-id u-123');
   });
@@ -92,7 +133,7 @@ describe('ChatSession.ensure', () => {
   it('tmux 会话已存在 → 不新建，直接 seed 历史', async () => {
     const tmux = fakeTmux({ hasSession: vi.fn(async () => true) });
     const hist: ChatMessage[] = [{ uuid: 'm1', role: 'user', blocks: [{ type: 'text', text: 'hi' }] }];
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(hist), hasTranscript: () => true }, events());
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(hist), hasTranscript: () => true, adapter: makeFakeClaudeAdapter() }, events());
     await s.ensure();
     expect(tmux.newDetached).not.toHaveBeenCalled();
     expect(s.getMessages()).toEqual(hist);
@@ -103,7 +144,7 @@ describe('ChatSession 输入', () => {
   it('sendText 粘贴文本 + Enter + 标记运行', async () => {
     const tmux = fakeTmux();
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.sendText('hello');
     expect(tmux.calls.pasteText[0]).toBe('hello');
     expect(tmux.calls.sendKeys[0]).toEqual(['Enter']);
@@ -112,7 +153,7 @@ describe('ChatSession 输入', () => {
 
   it('sendKey 映射命名键', async () => {
     const tmux = fakeTmux();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, events());
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, events());
     await s.sendKey('esc');
     await s.sendKey('up');
     await s.sendKey('ctrl-c');
@@ -122,7 +163,7 @@ describe('ChatSession 输入', () => {
   it('setEffort 发 /effort 命令，不翻转 running', async () => {
     const tmux = fakeTmux();
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.setEffort('max');
     expect(tmux.calls.pasteText.at(-1)).toBe('/effort max');
     expect(tmux.calls.sendKeys.at(-1)).toEqual(['Enter']);
@@ -136,7 +177,7 @@ describe('ChatSession.tick', () => {
     const tmux = fakeTmux();
     const tail = fakeTail();
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail, hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail, hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     const m: ChatMessage = { uuid: 'a1', role: 'assistant', blocks: [{ type: 'text', text: 'yo' }] };
     tail.push(m);
     await s.tick();
@@ -149,7 +190,7 @@ describe('ChatSession.tick', () => {
     const tmux = fakeTmux();
     const tail = fakeTail([{ uuid: 'u1', role: 'user', blocks: [{ type: 'text', text: 'a' }] }]);
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail, hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail, hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.ensure(); // messages = [u1]
     const forked: ChatMessage = { uuid: 'u2', role: 'user', blocks: [{ type: 'text', text: 'b' }] };
     tail.setChain([forked]); // 链头变（u1→u2），非前缀
@@ -192,7 +233,7 @@ describe('ChatSession.tick', () => {
     let pane = streaming;
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => pane) });
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
 
     await s.tick();
     expect(ev.onTurnState).toHaveBeenCalledWith(true);
@@ -219,7 +260,7 @@ describe('ChatSession.tick', () => {
     ].join('\n');
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => idlePane) });
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     for (let i = 0; i < 10; i++) await s.tick();
     expect(s.isRunning()).toBe(false);
     expect(ev.onTurnState).not.toHaveBeenCalled(); // 从未翻转
@@ -252,7 +293,7 @@ describe('ChatSession.tick', () => {
     let pane = stale;
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => pane) });
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
 
     await s.sendText('新问题'); // holdPreview=true
     await s.tick(); // 残留屏幕被屏蔽，不应发预览
@@ -279,7 +320,7 @@ describe('ChatSession.rewind', () => {
     const rw = fakeRewind();
     const s = new ChatSession(
       spec,
-      { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, makeRewind: () => rw },
+      { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), makeRewind: () => rw },
       ev,
     );
     await s.rewindOpen();
@@ -296,7 +337,7 @@ describe('ChatSession.rewind', () => {
     const rw = fakeRewind();
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail, hasTranscript: () => false, makeRewind: () => rw },
+      { tmux: fakeTmux(), scrape: scrapePane, tail, hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), makeRewind: () => rw },
       ev,
     );
     const chain = [msg('u0', 'user', 'p0'), msg('a0', 'assistant', 'r0'), msg('u1', 'user', 'p1'), msg('a1', 'assistant', 'r1')];
@@ -322,7 +363,7 @@ describe('ChatSession.rewind', () => {
     const rw = fakeRewind();
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail, hasTranscript: () => false, makeRewind: () => rw },
+      { tmux: fakeTmux(), scrape: scrapePane, tail, hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), makeRewind: () => rw },
       ev,
     );
     const chain = [msg('u0', 'user', 'p0'), msg('a0', 'assistant', 'r0'), msg('u1', 'user', 'p1'), msg('a1', 'assistant', 'r1')];
@@ -342,7 +383,7 @@ describe('ChatSession.rewind', () => {
     const rw = fakeRewind();
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail, hasTranscript: () => false, makeRewind: () => rw },
+      { tmux: fakeTmux(), scrape: scrapePane, tail, hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), makeRewind: () => rw },
       ev,
     );
     tail.setChain([msg('u0', 'user', 'p0'), msg('a0', 'assistant', 'r0'), msg('u1', 'user', 'p1'), msg('a1', 'assistant', 'r1')]);
@@ -362,7 +403,7 @@ describe('ChatSession.rewind', () => {
     const rw = fakeRewind({ execute: vi.fn(async () => ({ ok: false, error: 'x' })) });
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail, hasTranscript: () => false, makeRewind: () => rw },
+      { tmux: fakeTmux(), scrape: scrapePane, tail, hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), makeRewind: () => rw },
       ev,
     );
     tail.setChain([msg('u0', 'user', 'p0'), msg('a0', 'assistant', 'r0')]);
@@ -381,7 +422,7 @@ describe('ChatSession.ask', () => {
     const ask = fakeAsk();
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, makeAsk: () => ask },
+      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), makeAsk: () => ask },
       ev,
     );
     await s.answerAsk('t1', [{ questionIndex: 0, optionIndices: [1] }]);
@@ -395,7 +436,7 @@ describe('ChatSession.ask', () => {
     const ask = fakeAsk({ answer: vi.fn(async () => ({ ok: false, error: 'unreachable' })) });
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, makeAsk: () => ask },
+      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), makeAsk: () => ask },
       ev,
     );
     await s.answerAsk('t1', [{ questionIndex: 0, optionIndices: [0] }]);
@@ -410,7 +451,7 @@ describe('ChatSession.ask', () => {
     const ask = fakeAsk({ answer: vi.fn(() => new Promise<{ ok: boolean }>((r) => (release = () => r({ ok: true })))) });
     const s = new ChatSession(
       spec,
-      { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, makeAsk: () => ask },
+      { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), makeAsk: () => ask },
       ev,
     );
     const p = s.answerAsk('t1', [{ questionIndex: 0, optionIndices: [0] }]); // askActive=true,answer 挂起
@@ -438,7 +479,7 @@ describe('ChatSession 待答选择题(实时读屏)', () => {
   it('检测到待答 → onAskPending(真实选项),抑制预览,running=false', async () => {
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => ASK_PANE) });
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.tick();
     expect(ev.onAskPending).toHaveBeenCalledWith({
       options: [
@@ -455,7 +496,7 @@ describe('ChatSession 待答选择题(实时读屏)', () => {
   it('同一菜单连续 tick 只发一次 onAskPending(签名去重)', async () => {
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => ASK_PANE) });
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.tick();
     await s.tick();
     await s.tick();
@@ -466,7 +507,7 @@ describe('ChatSession 待答选择题(实时读屏)', () => {
     let pane = ASK_PANE;
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => pane) });
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.tick();
     pane = 'just some idle text';
     await s.tick();
@@ -479,7 +520,7 @@ describe('ChatSession 待答选择题(实时读屏)', () => {
     const ev = events();
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, makeAsk: () => ask },
+      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), makeAsk: () => ask },
       ev,
     );
     await s.answerPendingAsk([1]);
@@ -492,7 +533,7 @@ describe('ChatSession 待答选择题(实时读屏)', () => {
     const ev = events();
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, makeAsk: () => ask },
+      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), makeAsk: () => ask },
       ev,
     );
     await s.answerPendingAsk([0]);
@@ -503,7 +544,7 @@ describe('ChatSession 待答选择题(实时读屏)', () => {
     const streaming = ['❯ q', '', '● 正文在生成。', '', '✽ Slithering…'].join('\n');
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => streaming) });
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.tick();
     expect(ev.onAskPending).not.toHaveBeenCalled();
     expect(ev.onPreview).toHaveBeenCalledWith(expect.stringContaining('正文在生成'));
@@ -531,6 +572,7 @@ describe('ChatSession 待答选择题(hook 真值)', () => {
         scrape: scrapePane,
         tail: fakeTail(),
         hasTranscript: () => false,
+        adapter: makeFakeClaudeAdapter(),
         askDir: '/d',
         askLaunch: { envExport: "export RCC_ASK_DIR='/d'; ", settingsArg: "--settings '/s.json'" },
       },
@@ -544,7 +586,7 @@ describe('ChatSession 待答选择题(hook 真值)', () => {
     const ev = events();
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, askDir: '/d', readAskSidecar: () => HOOK_PENDING },
+      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), askDir: '/d', readAskSidecar: () => HOOK_PENDING },
       ev,
     );
     await s.tick();
@@ -568,7 +610,7 @@ describe('ChatSession 待答选择题(hook 真值)', () => {
     const ev = events();
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, askDir: '/d', readAskSidecar: () => HOOK_PENDING },
+      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), askDir: '/d', readAskSidecar: () => HOOK_PENDING },
       ev,
     );
     await s.tick();
@@ -581,7 +623,7 @@ describe('ChatSession 待答选择题(hook 真值)', () => {
     const ev = events();
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, askDir: '/d', readAskSidecar: () => p },
+      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), askDir: '/d', readAskSidecar: () => p },
       ev,
     );
     await s.tick();
@@ -596,7 +638,7 @@ describe('ChatSession 待答选择题(hook 真值)', () => {
     const ev = events();
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, askDir: '/d', readAskSidecar: () => HOOK_PENDING, makeAskDriver: () => driver },
+      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), askDir: '/d', readAskSidecar: () => HOOK_PENDING, makeAskDriver: () => driver },
       ev,
     );
     await s.answerPendingAsk([1]);
@@ -610,7 +652,7 @@ describe('ChatSession 待答选择题(hook 真值)', () => {
     const ev = events();
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, askDir: '/d', readAskSidecar: () => HOOK_PENDING, makeAskDriver: () => driver, makeAsk: () => ask },
+      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), askDir: '/d', readAskSidecar: () => HOOK_PENDING, makeAskDriver: () => driver, makeAsk: () => ask },
       ev,
     );
     await s.answerPendingAsk([0]);
@@ -622,7 +664,7 @@ describe('ChatSession 待答选择题(hook 真值)', () => {
     const ev = events();
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, askDir: '/d', readAskSidecar: () => HOOK_PENDING, makeAskDriver: () => driver },
+      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), askDir: '/d', readAskSidecar: () => HOOK_PENDING, makeAskDriver: () => driver },
       ev,
     );
     await s.answerPendingAsk([0]);
@@ -634,7 +676,7 @@ describe('ChatSession 待答选择题(hook 真值)', () => {
     const ev = events();
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, askDir: '/d', readAskSidecar: () => HOOK_PENDING, makeAskDriver: () => driver },
+      { tmux: fakeTmux(), scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter(), askDir: '/d', readAskSidecar: () => HOOK_PENDING, makeAskDriver: () => driver },
       ev,
     );
     await s.tick();
@@ -660,7 +702,7 @@ describe('ChatSession HUD 读屏', () => {
   it('首次 tick → onHud(解析出 model/上下文/限额),getLiveHud 返回它', async () => {
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => HUD_PANE) });
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.tick();
     expect(ev.onHud).toHaveBeenCalledTimes(1);
     const hud = ev.onHud.mock.calls[0][0];
@@ -675,7 +717,7 @@ describe('ChatSession HUD 读屏', () => {
   it('HUD 不变 → 连续 tick 只发一次(签名去重)', async () => {
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => HUD_PANE) });
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.tick();
     await s.tick();
     await s.tick();
@@ -686,7 +728,7 @@ describe('ChatSession HUD 读屏', () => {
     let pane = HUD_PANE;
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => pane) });
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.tick();
     pane = HUD_PANE.replace('19%', '20%');
     await s.tick();
@@ -697,7 +739,7 @@ describe('ChatSession HUD 读屏', () => {
   it('无 HUD 状态行的屏 → 不发 onHud,getLiveHud 仍为 null', async () => {
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => 'just idle chat\n❯ ') });
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.tick();
     expect(ev.onHud).not.toHaveBeenCalled();
     expect(s.getLiveHud()).toBeNull();
@@ -718,7 +760,7 @@ describe('ChatSession HUD 读屏', () => {
     ].join('\n');
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => pane) });
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.tick();
     // ask 与 HUD 互不影响:两者都应触发。
     expect(ev.onAskPending).toHaveBeenCalledTimes(1);
@@ -750,6 +792,7 @@ describe('ChatSession HUD 分层数据源', () => {
         scrape: scrapePane,
         tail: fakeTail(),
         hasTranscript: () => false,
+        adapter: makeFakeClaudeAdapter(),
         statuslineDir: '/dir',
         readSidecar: () => ({ content: sidecarJson, mtimeMs: Date.now() }),
       },
@@ -777,6 +820,7 @@ describe('ChatSession HUD 分层数据源', () => {
         scrape: scrapePane,
         tail: fakeTail(),
         hasTranscript: () => false,
+        adapter: makeFakeClaudeAdapter(),
         statuslineDir: '/dir',
         readSidecar: () => ({ content: sidecarJson, mtimeMs: Date.now() - 60_000 }), // >15s
       },
@@ -791,7 +835,7 @@ describe('ChatSession HUD 分层数据源', () => {
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => HUD_PANE) });
     const ev = events();
     const tail = { ...fakeTail(), lastAssistantUsage: () => ({ input_tokens: 100_000, cache_read_input_tokens: 50_000 }) };
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail, hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail, hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.tick();
     expect(ev.onHud).toHaveBeenCalledTimes(1);
     const hud = ev.onHud.mock.calls[0][0];
@@ -806,7 +850,7 @@ describe('ChatSession HUD 分层数据源', () => {
   it('无 sidecar/transcript,仅读屏 → source=pane(旧行为不破)', async () => {
     const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => HUD_PANE) });
     const ev = events();
-    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false }, ev);
+    const s = new ChatSession(spec, { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeClaudeAdapter() }, ev);
     await s.tick();
     expect(ev.onHud).toHaveBeenCalledTimes(1);
     expect(ev.onHud.mock.calls[0][0].source).toBe('pane');
@@ -825,7 +869,7 @@ describe('ChatSession 历史骨架', () => {
     const tail = fakeTail(chain);
     const s = new ChatSession(
       spec,
-      { tmux: fakeTmux({ hasSession: vi.fn(async () => true) }), scrape: scrapePane, tail, hasTranscript: () => true },
+      { tmux: fakeTmux({ hasSession: vi.fn(async () => true) }), scrape: scrapePane, tail, hasTranscript: () => true, adapter: makeFakeClaudeAdapter() },
       events(),
     );
     await s.ensure(); // messages = chain
@@ -840,5 +884,137 @@ describe('ChatSession 历史骨架', () => {
     }
     expect(s.getTurnBody('a0')?.map((m) => m.uuid)).toEqual(['a0']);
     expect(s.getTurnBody('nope')).toBeNull();
+  });
+});
+
+describe('ChatSession codex 模式(capability 全 false)', () => {
+  const codexSpec: ChatSpec = { ...spec, agentKind: 'codex', launchCommand: 'codex --yolo' };
+
+  it('setEffort/answerAsk/answerPendingAsk/rewind* 静默 noop:不动 tmux、返回 noop 值', async () => {
+    const tmux = fakeTmux();
+    const ev = events();
+    const s = new ChatSession(
+      codexSpec,
+      { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeCodexAdapter() },
+      ev,
+    );
+    // effort:不发 /effort,不碰 tmux。
+    await s.setEffort('high');
+    expect(tmux.pasteText).not.toHaveBeenCalled();
+    expect(tmux.sendKeys).not.toHaveBeenCalled();
+    // rewind:open 返空、execute 返失败、cancel 静默。
+    expect(await s.rewindOpen()).toEqual([]);
+    expect(await s.rewindExecute(0, 'conversation')).toEqual({ ok: false, error: 'rewind 不支持' });
+    await s.rewindCancel();
+    // answerAsk:广播 failed(不 driving)。
+    await s.answerAsk('t1', [{ questionIndex: 0, optionIndices: [0] }]);
+    expect(ev.onAskState).toHaveBeenCalledWith({ toolUseId: 't1', status: 'failed', error: 'askHook 不支持' });
+    expect(ev.onAskState).not.toHaveBeenCalledWith({ toolUseId: 't1', status: 'driving' });
+    // answerPendingAsk:广播 failed。
+    await s.answerPendingAsk([0]);
+    expect(ev.onAskPendingFailed).toHaveBeenCalledWith('askHook 不支持');
+    // getLiveAsk/getLiveHud:始终 null。
+    expect(s.getLiveAsk()).toBeNull();
+    expect(s.getLiveHud()).toBeNull();
+    // 全程没有任何按键被发出(连 rewind/ask 控制器都没被触达)。
+    expect(tmux.sendKeys).not.toHaveBeenCalled();
+    expect(tmux.pasteText).not.toHaveBeenCalled();
+  });
+
+  it('tick 不发 HUD、不发待答(hud/askHook 两段被 capability 包护跳过)', async () => {
+    // 给一屏既像 claude HUD 又像 ask 菜单的内容:codex 模式下两段都不该触发。
+    const pane = [
+      '  [claude-opus-4-8[1m]] ██░░ 19% | repo git:(master*) | Usage █░░ 14% (2h / 5h)',
+      '❯ 1. Apple',
+      '  2. Banana',
+      'Enter to select · ↑/↓ to navigate · Esc to cancel',
+    ].join('\n');
+    const tmux = fakeTmux({ capturePaneVisible: vi.fn(async () => pane) });
+    const ev = events();
+    const s = new ChatSession(
+      codexSpec,
+      { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeCodexAdapter() },
+      ev,
+    );
+    await s.tick();
+    expect(ev.onHud).not.toHaveBeenCalled();
+    expect(ev.onAskPending).not.toHaveBeenCalled();
+  });
+
+  it('ensure 走 adapter.buildLaunchCmd(无 transcript)', async () => {
+    const tmux = fakeTmux();
+    const s = new ChatSession(
+      codexSpec,
+      { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter: makeFakeCodexAdapter() },
+      events(),
+    );
+    await s.ensure();
+    // codex buildLaunchCmd 透传 launchCommand(无 --session-id/--effort)。
+    expect(tmux.calls.newDetached[0][2]).toBe('codex --yolo');
+  });
+
+  it('ensure 走 adapter.buildResumeCmd(有 transcript) → codex resume 模板', async () => {
+    const tmux = fakeTmux();
+    const s = new ChatSession(
+      codexSpec,
+      { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => true, adapter: makeFakeCodexAdapter() },
+      events(),
+    );
+    await s.ensure();
+    expect(tmux.calls.newDetached[0][2]).toBe('codex resume --yolo u-123');
+  });
+
+  it('!presetSessionId:首次启动后 discoverSessionId 扫到新 UUID → 回调 + tail.setSessionId', async () => {
+    const tmux = fakeTmux();
+    const resolved: string[] = [];
+    const setSidCalls: string[] = [];
+    // tail 暴露 setSessionId 钩子(codex tail 有)。
+    const tail = Object.assign(fakeTail(), { setSessionId: (sid: string) => setSidCalls.push(sid) });
+    const adapter = makeFakeCodexAdapter({ discoverSessionId: async () => 'real-uuid-xyz' });
+    const s = new ChatSession(
+      { ...codexSpec, onSessionIdResolved: (sid) => resolved.push(sid) },
+      { tmux, scrape: scrapePane, tail, hasTranscript: () => false, adapter },
+      events(),
+    );
+    await s.ensure();
+    // discoverAndPersistSessionId 是 fire-and-forget,await 一个微任务队列让它跑完。
+    await new Promise((r) => setTimeout(r, 0));
+    expect(resolved).toEqual(['real-uuid-xyz']);
+    expect(setSidCalls).toEqual(['real-uuid-xyz']);
+  });
+
+  it('!presetSessionId 但扫到的 UUID 与占位相同 → 不回调、不切 tail', async () => {
+    const tmux = fakeTmux();
+    const resolved: string[] = [];
+    const setSidCalls: string[] = [];
+    const tail = Object.assign(fakeTail(), { setSessionId: (sid: string) => setSidCalls.push(sid) });
+    // discoverSessionId 返回占位本身(u-123)。
+    const adapter = makeFakeCodexAdapter({ discoverSessionId: async (o) => o.tentativeSessionId });
+    const s = new ChatSession(
+      { ...codexSpec, onSessionIdResolved: (sid) => resolved.push(sid) },
+      { tmux, scrape: scrapePane, tail, hasTranscript: () => false, adapter },
+      events(),
+    );
+    await s.ensure();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(resolved).toEqual([]);
+    expect(setSidCalls).toEqual([]);
+  });
+
+  it('presetSessionId=true(claude)不触发 discoverSessionId 回写', async () => {
+    const tmux = fakeTmux();
+    const resolved: string[] = [];
+    const discover = vi.fn(async () => 'should-not-be-used');
+    const adapter = makeFakeClaudeAdapter();
+    adapter.discoverSessionId = discover;
+    const s = new ChatSession(
+      { ...spec, onSessionIdResolved: (sid) => resolved.push(sid) },
+      { tmux, scrape: scrapePane, tail: fakeTail(), hasTranscript: () => false, adapter },
+      events(),
+    );
+    await s.ensure();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(discover).not.toHaveBeenCalled();
+    expect(resolved).toEqual([]);
   });
 });

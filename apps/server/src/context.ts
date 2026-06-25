@@ -14,6 +14,7 @@ import { ChatRegistry } from './lib/session/chat/chatRegistry';
 import { ChatSession } from './lib/session/chat/chatSession';
 import { scrapePane } from './lib/session/chat/paneScraper';
 import { TranscriptTail, locateTranscript, projectsDirFor } from './lib/session/chat/transcript';
+import { makeClaudeAdapter } from './lib/session/chat/agent/claudeAdapter';
 import { ensureAskHookSettings, askLaunchExtra } from './lib/session/chat/askHookSettings';
 import { readPendingAsk, askSidecarPath } from './lib/session/chat/askSidecar';
 import { ResearchProviderRegistry } from './lib/researchProvider';
@@ -167,6 +168,10 @@ export async function buildContext(config: Config): Promise<AppContext> {
         scrape: scrapePane,
         tail,
         hasTranscript: () => locateTranscript(spec.sessionId, projectsDir) !== null,
+        // capability 化注入(Task 8):当前仅 claude 一种行为,故注入 claude adapter
+        // (全能力开,命令输出与既有 buildClaudeCmd 一致,行为零变化)。
+        // Task 9 在此处改为按 spec.agentKind 选 claude/codex adapter。
+        adapter: makeClaudeAdapter(config.serviceUser),
         statuslineDir: userStatuslineDir,
         readSidecar: (p: string) => {
           const content = readFileSync(p, 'utf8');

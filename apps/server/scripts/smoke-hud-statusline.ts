@@ -16,6 +16,7 @@ import { Tmux } from '../src/lib/session/tmux';
 import { ChatSession } from '../src/lib/session/chat/chatSession';
 import { scrapePane } from '../src/lib/session/chat/paneScraper';
 import { TranscriptTail, locateTranscript } from '../src/lib/session/chat/transcript';
+import { makeClaudeAdapter } from '../src/lib/session/chat/agent/claudeAdapter';
 import type { Hud } from '@rcc/shared';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -37,12 +38,14 @@ async function main() {
       sessionId,
       cols: 120,
       rows: 40,
+      agentKind: 'claude',
     },
     {
       tmux,
       scrape: scrapePane,
       tail,
       hasTranscript: () => locateTranscript(sessionId) !== null,
+      adapter: makeClaudeAdapter(process.env.USER ?? ''),
       statuslineDir: DIR,
       readSidecar: (p: string) => ({ content: readFileSync(p, 'utf8'), mtimeMs: statSync(p).mtimeMs }),
     },

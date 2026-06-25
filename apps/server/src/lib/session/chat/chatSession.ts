@@ -2,10 +2,12 @@
  * 一个聊天会话的运行时：在 tmux 里跑原生交互式 claude，
  * 以"读屏出流式预览 + transcript 出结构化消息"两路喂给前端。
  */
-import type { AskPending, AskPick, ChatKey, ChatMessage, ChatHistorySnapshot, EffortLevel, Hud, RewindItem, RewindMode } from '@rcc/shared';
+import type { AgentKind, AskPending, AskPick, ChatKey, ChatMessage, ChatHistorySnapshot, EffortLevel, Hud, RewindItem, RewindMode } from '@rcc/shared';
 import { buildHistorySnapshot, getTurnSlice } from '@rcc/shared';
 import type { PaneScrape } from './paneScraper';
-import { buildClaudeCmd } from './launch';
+// 启动命令不再硬调 buildClaudeCmd,改走 deps.adapter.buildLaunchCmd/buildResumeCmd
+// (claude adapter 内部仍调 buildClaudeCmd,故输出与既有完全一致)。
+import type { AgentAdapter } from './agent/adapter';
 import { RewindController, type RewindResult } from './rewind';
 import { AskController, type AskResult } from './askController';
 import { parseAskPickerLive } from './askScraper';
@@ -55,6 +57,13 @@ export interface ChatSpec {
    * 可选(老 spec 不带);chatRegistry 工厂缺则回 ServiceUser(单用户兼容)。
    */
   unixUser?: string;
+  /** agent 类型(claude/codex);供路由/前端区分,本会话内部行为由 deps.adapter.capabilities 决定。 */
+  agentKind: AgentKind;
+  /**
+   * codex 首次启动后扫到真实 UUID 时回调,通知路由层落盘(claude 预指定 UUID,永不触发)。
+   * 仅在 adapter.capabilities.presetSessionId=false 时可能被调。
+   */
+  onSessionIdResolved?: (sessionId: string) => void;
 }
 
 export interface TmuxLike {
@@ -84,6 +93,12 @@ export interface ChatSessionDeps {
   tail: TranscriptLike;
   /** 是否已存在该 sessionId 的 transcript（决定 --resume 还是 --session-id）。 */
   hasTranscript: () => boolean;
+  /**
+   * agent 适配器（必填）。ChatSession 据 adapter.capabilities.* 决定走哪些横切分支
+   * （effort/askHook/hud/rewind/presetSessionId）；buildLaunchCmd/buildResumeCmd 供 ensure 拼启动命令。
+   * claude adapter 全能力 true 且命令输出与既有 buildClaudeCmd 一字不差，故 claude 路径行为零变化。
+   */
+  adapter: AgentAdapter;
   /** 读屏轮询间隔（ms），默认 250。 */
   pollMs?: number;
   /** 预览无变化多少 tick 后判定空闲（running=false），默认 8。 */
@@ -175,16 +190,25 @@ export class ChatSession {
     private readonly events: ChatSessionEvents,
   ) {}
 
-  /** 确保 tmux 会话存在：不存在则按是否已有 transcript 决定 resume/new。 */
+  /** 确保 tmux 会话存在：不存在则按是否已有 transcript 决定 resume/new（命令经 adapter 拼）。 */
   async ensure(): Promise<void> {
     if (!(await this.deps.tmux.hasSession(this.spec.tmuxName))) {
-      const cmd = buildClaudeCmd({
-        launchCommand: this.spec.launchCommand,
-        sessionId: this.spec.sessionId,
-        effort: this.spec.effort,
-        hasTranscript: this.deps.hasTranscript(),
-        askLaunch: this.deps.askLaunch,
-      });
+      const hasTranscript = this.deps.hasTranscript();
+      // claude adapter 内部仍调 buildClaudeCmd（hasTranscript 决定 --resume/--session-id），
+      // 输出与改造前完全一致；codex adapter 各自拼自己的启动/resume 命令。
+      const cmd = hasTranscript
+        ? this.deps.adapter.buildResumeCmd({
+            launchCommand: this.spec.launchCommand,
+            sessionId: this.spec.sessionId,
+            effort: this.spec.effort,
+            askLaunch: this.deps.askLaunch,
+          })
+        : this.deps.adapter.buildLaunchCmd({
+            launchCommand: this.spec.launchCommand,
+            sessionId: this.spec.sessionId,
+            effort: this.spec.effort,
+            askLaunch: this.deps.askLaunch,
+          });
       await this.deps.tmux.newDetached(
         this.spec.tmuxName,
         this.spec.cwd,
@@ -192,6 +216,12 @@ export class ChatSession {
         this.spec.cols,
         this.spec.rows,
       );
+
+      // codex 不能预指定 UUID（presetSessionId=false）：首次启动后异步扫真实 UUID 并回写。
+      // claude（presetSessionId=true）跳过——它的 UUID 启动时已经 --session-id 传死。
+      if (!this.deps.adapter.capabilities.presetSessionId) {
+        void this.discoverAndPersistSessionId();
+      }
     }
     // 故意不 resize-window 强制归位:多 client(手机/电脑同时连)情况下,tmux 跟最小 attached client 走,
     // 强制设固定尺寸会和 attached client 抢,屏边出现一片 dots 协调中标记。
@@ -200,7 +230,8 @@ export class ChatSession {
     // 清掉本会话的旧 ask sidecar:上次崩溃 / 用户在终端 Ctrl-C / claude 被 kill,
     // PreToolUse 写了但 PostToolUse 没机会删 → 文件残留 → tick 误判为"待答中"显示假卡片。
     // 真有待答时菜单还在 TUI 里,用户经 KeyBar/终端模式可作答;宁可漏报不要假报。
-    if (this.deps.askDir && this.deps.cleanAskSidecar) {
+    // askHook 关闭(codex)时整段跳过——它没 hook,无 sidecar 概念。
+    if (this.deps.adapter.capabilities.askHook && this.deps.askDir && this.deps.cleanAskSidecar) {
       try {
         this.deps.cleanAskSidecar(this.deps.askDir, this.spec.sessionId);
       } catch {
@@ -208,6 +239,28 @@ export class ChatSession {
       }
     }
     this.messages = this.deps.tail.activeChain();
+  }
+
+  /**
+   * codex 首次启动后发现真实 sessionId 并回写。
+   * 扫到且与占位不同 → 回调路由层落盘 + 调 tail.setSessionId 让 tail 切到真实文件。
+   * claude 路径永不进这里(ensure 仅在 !presetSessionId 时调)。
+   */
+  private async discoverAndPersistSessionId(): Promise<void> {
+    const startedAt = Date.now();
+    const real = await this.deps.adapter.discoverSessionId({
+      tentativeSessionId: this.spec.sessionId,
+      unixUser: this.spec.unixUser ?? '',
+      cwd: this.spec.cwd,
+      timeoutMs: 5000,
+      startedAt,
+    });
+    if (real && real !== this.spec.sessionId) {
+      this.spec.onSessionIdResolved?.(real);
+      // tail 经 setSessionId 钩子切换路径(codex tail 有此钩子,claude tail 没有)。
+      const tailAny = this.deps.tail as TranscriptLike & { setSessionId?: (sid: string) => void };
+      if (typeof tailAny.setSessionId === 'function') tailAny.setSessionId(real);
+    }
   }
 
   getMessages(): ChatMessage[] {
@@ -272,6 +325,7 @@ export class ChatSession {
    * 故意不置 holdPreview/running——/effort 不是一轮生成，不该显示"思考中"。
    */
   async setEffort(level: EffortLevel): Promise<void> {
+    if (!this.deps.adapter.capabilities.effort) return; // codex 无 /effort,静默 noop
     await this.deps.tmux.pasteText(this.spec.tmuxName, `/effort ${level}`);
     await this.deps.tmux.sendKeys(this.spec.tmuxName, ['Enter']);
   }
@@ -287,6 +341,7 @@ export class ChatSession {
 
   /** 打开原生 rewind picker 并返回可回退点；期间 tick 静默。 */
   async rewindOpen(): Promise<RewindItem[]> {
+    if (!this.deps.adapter.capabilities.rewind) return []; // codex 无 /rewind,返回空列表
     this.rewindActive = true;
     try {
       return (await this.ensureRewind().open()).items;
@@ -301,6 +356,7 @@ export class ChatSession {
    * 故按所选行序号截到「第 index 个用户文本消息」之前并广播 onHistory。
    */
   async rewindExecute(index: number, mode: RewindMode): Promise<RewindResult> {
+    if (!this.deps.adapter.capabilities.rewind) return { ok: false, error: 'rewind 不支持' };
     let r: RewindResult;
     try {
       r = await this.ensureRewind().execute(index, mode);
@@ -324,6 +380,7 @@ export class ChatSession {
 
   /** 关闭 rewind picker（取消）。 */
   async rewindCancel(): Promise<void> {
+    if (!this.deps.adapter.capabilities.rewind) return; // codex 无 rewind,静默 noop
     try {
       await this.ensureRewind().cancel();
     } finally {
@@ -345,6 +402,11 @@ export class ChatSession {
    * 广播 driving→done/failed;成功后答案经 transcript 落地使选择框转「已作答」。
    */
   async answerAsk(toolUseId: string, picks: AskPick[]): Promise<void> {
+    if (!this.deps.adapter.capabilities.askHook) {
+      // codex 无 AskHook:广播 failed 让前端兜底(留终端/按键条手动作答)。
+      this.events.onAskState({ toolUseId, status: 'failed', error: 'askHook 不支持' });
+      return;
+    }
     this.askActive = true;
     this.events.onAskState({ toolUseId, status: 'driving' });
     try {
@@ -382,6 +444,10 @@ export class ChatSession {
    * 成功后菜单关闭由 tick(sidecar 消失)发 onAskPendingClear;失败广播以便前端兜底(留菜单可手动答)。
    */
   async answerPendingAsk(optionIndices: number[]): Promise<void> {
+    if (!this.deps.adapter.capabilities.askHook) {
+      this.events.onAskPendingFailed('askHook 不支持'); // codex:前端复位卡片
+      return;
+    }
     this.askActive = true;
     try {
       if (this.deps.askDir) {
@@ -416,6 +482,7 @@ export class ChatSession {
 
   /** 当前待答态(重连/新订阅补发用;待答态不在 transcript 历史里)。无则 null。 */
   getLiveAsk(): AskPending | null {
+    if (!this.deps.adapter.capabilities.askHook) return null; // codex 无待答卡片
     if (this.deps.askDir) {
       const read = this.deps.readAskSidecar ?? readPendingAsk;
       const p = read(this.deps.askDir, this.spec.sessionId);
@@ -427,6 +494,7 @@ export class ChatSession {
 
   /** 当前 HUD 态(重连/新订阅补发用;HUD 是当前态、不在 transcript 里)。无则 null。 */
   getLiveHud(): Hud | null {
+    if (!this.deps.adapter.capabilities.hud) return null; // codex 不识别用量 HUD
     return this.lastHud;
   }
 
@@ -473,66 +541,73 @@ export class ChatSession {
       //   2) transcript 末条 assistant.usage 推 context(窗口未知则近似)
       //   3) 读屏 scrapeHud(pane)(旧路径,兜底)
       // pickHud 按此优先级合并(sidecar 缺 git 从 pane 补;transcript 叠加 pane 的用量)。
-      const slHud =
-        this.deps.statuslineDir && this.deps.readSidecar
-          ? readStatuslineSidecar({ read: this.deps.readSidecar }, this.deps.statuslineDir, this.spec.sessionId)
-          : null;
-      const usage = this.deps.tail.lastAssistantUsage?.() ?? null;
-      const trHud = !slHud && usage ? hudFromTranscript(usage) : null;
-      const paneHud = scrapeHud(pane);
-      const hud = pickHud({ statusline: slHud, transcript: trHud, pane: paneHud });
-      if (hud) {
-        const hudSig = JSON.stringify(hud);
-        if (hudSig !== this.lastHudSig) {
-          this.lastHudSig = hudSig;
-          this.lastHud = hud;
-          this.events.onHud(hud);
+      // capabilities.hud 关闭(codex)整段跳过:codex 屏不是 claude 的 HUD 格式,识别没意义。
+      if (this.deps.adapter.capabilities.hud) {
+        const slHud =
+          this.deps.statuslineDir && this.deps.readSidecar
+            ? readStatuslineSidecar({ read: this.deps.readSidecar }, this.deps.statuslineDir, this.spec.sessionId)
+            : null;
+        const usage = this.deps.tail.lastAssistantUsage?.() ?? null;
+        const trHud = !slHud && usage ? hudFromTranscript(usage) : null;
+        const paneHud = scrapeHud(pane);
+        const hud = pickHud({ statusline: slHud, transcript: trHud, pane: paneHud });
+        if (hud) {
+          const hudSig = JSON.stringify(hud);
+          if (hudSig !== this.lastHudSig) {
+            this.lastHudSig = hudSig;
+            this.lastHud = hud;
+            this.events.onHud(hud);
+          }
         }
       }
 
       // 选择题待答。优先 hook 真值(askDir 设了即启用):sidecar 有→发待答(全结构)、抑制预览/运行、
       // 跳过其余读屏。hook 不可用(askDir 未设)时退回既有「读屏专属签名」检测,行为一字不改。
       // ——transcript 在待答期拿不到 tool_use,故 hook sidecar / 读屏是仅有的实时信号源。
-      if (this.deps.askDir) {
-        const read = this.deps.readAskSidecar ?? readPendingAsk;
-        const pending = read(this.deps.askDir, this.spec.sessionId);
-        if (pending && pending.questions.length > 0) {
-          const qi = Math.min(this.askQIndex, pending.questions.length - 1);
-          const ap = toAskPending(pending, qi);
-          const sig = `${pending.toolUseId}#${qi}`;
-          if (sig !== this.lastAskSig) {
-            this.lastAskSig = sig;
-            this.lastAsk = ap;
-            this.events.onAskPending(ap);
+      // capabilities.askHook 关闭(codex)时整段跳过:既有 hook 分支与读屏 parseAskPickerLive
+      // 分支都不跑(codex 的待答交互由用户走终端/按键条手动处理)。
+      if (this.deps.adapter.capabilities.askHook) {
+        if (this.deps.askDir) {
+          const read = this.deps.readAskSidecar ?? readPendingAsk;
+          const pending = read(this.deps.askDir, this.spec.sessionId);
+          if (pending && pending.questions.length > 0) {
+            const qi = Math.min(this.askQIndex, pending.questions.length - 1);
+            const ap = toAskPending(pending, qi);
+            const sig = `${pending.toolUseId}#${qi}`;
+            if (sig !== this.lastAskSig) {
+              this.lastAskSig = sig;
+              this.lastAsk = ap;
+              this.events.onAskPending(ap);
+            }
+            if (this.running) this.setRunning(false); // 等输入,不是"思考中"
+            this.holdPreview = false;
+            return; // 跳过下方既有预览/运行逻辑
           }
-          if (this.running) this.setRunning(false); // 等输入,不是"思考中"
-          this.holdPreview = false;
-          return; // 跳过下方既有预览/运行逻辑
-        }
-        if (this.lastAskSig) {
-          this.lastAskSig = '';
-          this.lastAsk = null;
-          this.askQIndex = 0;
-          this.events.onAskPendingClear();
-        }
-        // hook 模式无待答:继续走下方既有预览/运行逻辑(不跑 parseAskPickerLive)。
-      } else {
-        const ask = parseAskPickerLive(pane);
-        if (ask.open) {
-          const sig = JSON.stringify(ask.options.map((o) => o.label)) + (ask.multiSelect ? '#m' : '');
-          if (sig !== this.lastAskSig) {
-            this.lastAskSig = sig;
-            this.lastAsk = { options: ask.options, multiSelect: ask.multiSelect };
-            this.events.onAskPending(this.lastAsk);
+          if (this.lastAskSig) {
+            this.lastAskSig = '';
+            this.lastAsk = null;
+            this.askQIndex = 0;
+            this.events.onAskPendingClear();
           }
-          if (this.running) this.setRunning(false); // 等输入,不是"思考中"
-          this.holdPreview = false;
-          return; // 跳过下方既有预览/运行逻辑(完全不改其行为)
-        }
-        if (this.lastAskSig) {
-          this.lastAskSig = '';
-          this.lastAsk = null;
-          this.events.onAskPendingClear();
+          // hook 模式无待答:继续走下方既有预览/运行逻辑(不跑 parseAskPickerLive)。
+        } else {
+          const ask = parseAskPickerLive(pane);
+          if (ask.open) {
+            const sig = JSON.stringify(ask.options.map((o) => o.label)) + (ask.multiSelect ? '#m' : '');
+            if (sig !== this.lastAskSig) {
+              this.lastAskSig = sig;
+              this.lastAsk = { options: ask.options, multiSelect: ask.multiSelect };
+              this.events.onAskPending(this.lastAsk);
+            }
+            if (this.running) this.setRunning(false); // 等输入,不是"思考中"
+            this.holdPreview = false;
+            return; // 跳过下方既有预览/运行逻辑(完全不改其行为)
+          }
+          if (this.lastAskSig) {
+            this.lastAskSig = '';
+            this.lastAsk = null;
+            this.events.onAskPendingClear();
+          }
         }
       }
 

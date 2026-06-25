@@ -18,6 +18,7 @@ import { Tmux } from '../src/lib/session/tmux';
 import { ChatSession } from '../src/lib/session/chat/chatSession';
 import { scrapePane } from '../src/lib/session/chat/paneScraper';
 import { TranscriptTail, locateTranscript } from '../src/lib/session/chat/transcript';
+import { makeClaudeAdapter } from '../src/lib/session/chat/agent/claudeAdapter';
 import { ensureAskHookSettings, askLaunchExtra } from '../src/lib/session/chat/askHookSettings';
 import { readPendingAsk } from '../src/lib/session/chat/askSidecar';
 import type { AskPending } from '@rcc/shared';
@@ -68,12 +69,14 @@ async function main() {
       effort: 'low',
       cols: 120,
       rows: 40,
+      agentKind: 'claude',
     },
     {
       tmux,
       scrape: scrapePane,
       tail: new TranscriptTail(() => locateTranscript(sessionId)),
       hasTranscript: () => !!locateTranscript(sessionId),
+      adapter: makeClaudeAdapter(process.env.USER ?? ''),
       pollMs: 400,
       // hook 真值模式
       askDir,
