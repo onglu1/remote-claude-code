@@ -1,5 +1,9 @@
+import os from 'node:os';
 import { describe, it, expect } from 'vitest';
-import { claudeAdapter } from './claudeAdapter';
+import { makeClaudeAdapter } from './claudeAdapter';
+
+/** 测试用 adapter:serviceUser 绑当前进程用户;真实用法见 context 组装。 */
+const claudeAdapter = makeClaudeAdapter(os.userInfo().username);
 
 describe('claudeAdapter', () => {
   it('kind 是 claude', () => {

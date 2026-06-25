@@ -8,8 +8,15 @@ import { locateTranscript, projectsDirFor, TranscriptTail } from '../transcript'
 import { parseToolUseEvents as parseClaudeToolUseEvents } from '../../activity';
 import type { AgentAdapter, LaunchOpts, ResumeOpts, ToolUseEvent, TranscriptLike, DiscoverSessionIdOpts } from './adapter';
 
-/** 注:claude adapter 依赖外部 ServiceUser 解析 projects 目录;
- *  调用方在 context 里组装时传 serviceUser 进来。 */
+/**
+ * 唯一出口。serviceUser 由 context 在组装时显式传入(`ctx.config.serviceUser`)。
+ *
+ * **为什么必须传 serviceUser**:多用户隔离下,跨 unix 用户的 transcript 在对方
+ * `~/.claude/projects/*` 下(`projectsDirFor(unixUser, serviceUser)` 解析),
+ * 若误用进程用户作 serviceUser,在单用户机上"碰巧正确",到多用户机上则永久
+ * 找不到 transcript / 串号到 ServiceUser 那份(实证 bug)。故不提供任何
+ * "默认值"实例——强制调用方显式传一次。
+ */
 export function makeClaudeAdapter(serviceUser: string): AgentAdapter {
   return {
     kind: 'claude',
@@ -38,6 +45,8 @@ export function makeClaudeAdapter(serviceUser: string): AgentAdapter {
         askLaunch: opts.askLaunch,
       });
     },
+    // claude 用全局 sessionId 在 ~/.claude/projects/* 扫描,不依赖 cwd
+    // (codex 才需要 cwd,见 codexAdapter)。故 _cwd 在此层故意忽略。
     locateTranscript(sessionId: string, unixUser: string, _cwd: string): string | null {
       return locateTranscript(sessionId, projectsDirFor(unixUser, serviceUser));
     },
@@ -46,6 +55,7 @@ export function makeClaudeAdapter(serviceUser: string): AgentAdapter {
     },
     async discoverSessionId(opts: DiscoverSessionIdOpts): Promise<string | null> {
       // claude 是预指定 UUID,启动时已经传 --session-id,直接回原值。
+      // 其余参数(unixUser/cwd/timeoutMs/startedAt)仅 codex adapter 用。
       return opts.tentativeSessionId;
     },
     parseToolUseEvents(text: string): ToolUseEvent[] {
@@ -53,10 +63,3 @@ export function makeClaudeAdapter(serviceUser: string): AgentAdapter {
     },
   };
 }
-
-/**
- * 默认实例(serviceUser 在 context 里组装时再绑;这里给一个"用 ServiceUser=当前进程用户"的兜底
- * 仅供单测用,生产代码请用 makeClaudeAdapter(ctx.config.serviceUser))。
- */
-import os from 'node:os';
-export const claudeAdapter: AgentAdapter = makeClaudeAdapter(os.userInfo().username);
