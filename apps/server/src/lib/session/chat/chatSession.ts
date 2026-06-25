@@ -249,11 +249,15 @@ export class ChatSession {
    */
   private async discoverAndPersistSessionId(): Promise<void> {
     const startedAt = Date.now();
+    // codex 的 rollout jsonl 是懒创建的:启动进主界面不写,要等用户提交首条消息触发 turn
+    // 才写 ~/.codex/sessions/YYYY/MM/DD/rollout-*-<uuid>.jsonl。所以这里要"长耐心":
+    // 5min 覆盖大多数用户启动后到发首条消息的窗口。超时则放弃(用户可能从未发消息就关了页面),
+    // 下次 ensure(reflow / 浏览器重新打开)会重新启动这个轮询。
     const real = await this.deps.adapter.discoverSessionId({
       tentativeSessionId: this.spec.sessionId,
       unixUser: this.spec.unixUser ?? '',
       cwd: this.spec.cwd,
-      timeoutMs: 5000,
+      timeoutMs: 300_000,
       startedAt,
     });
     if (real && real !== this.spec.sessionId) {
@@ -289,9 +293,11 @@ export class ChatSession {
     await this.deps.tmux.pasteText(this.spec.tmuxName, text, multiline);
     // bracketed paste 后紧跟 Enter 字节,ink 在 \x1b[201~ 退出 paste mode 的同一 tick 里
     // 可能把 \r 当成 paste tail 吞掉(实测:文本进了输入框但没提交,要切到 tmux 手动回车)。
-    // 单行也加这个延迟无所谓——本来 Enter 立即到也没人发觉。
-    if (multiline) {
-      await new Promise((r) => setTimeout(r, 150));
+    // multiline 用 bracketed paste 必间隔(既有逻辑);codex 即使 single-line 也实测会吞
+    // (smoke-codex 验证 paste+紧贴 Enter 不提交),给它一个保险间隔。claude single-line
+    // 不进这分支,行为零变化。
+    if (multiline || this.spec.agentKind === 'codex') {
+      await new Promise((r) => setTimeout(r, 250));
     }
     await this.deps.tmux.sendKeys(this.spec.tmuxName, ['Enter']);
     this.holdPreview = true;
