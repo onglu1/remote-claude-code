@@ -7,7 +7,8 @@ import { buildHistorySnapshot, getTurnSlice } from '@rcc/shared';
 import type { PaneScrape } from './paneScraper';
 // 启动命令不再硬调 buildClaudeCmd,改走 deps.adapter.buildLaunchCmd/buildResumeCmd
 // (claude adapter 内部仍调 buildClaudeCmd,故输出与既有完全一致)。
-import type { AgentAdapter } from './agent/adapter';
+// TranscriptLike 真身在 ./agent/adapter,这里同时本地用 + re-export 保对外 import 不破。
+import type { AgentAdapter, TranscriptLike } from './agent/adapter';
 import { RewindController, type RewindResult } from './rewind';
 import { AskController, type AskResult } from './askController';
 import { parseAskPickerLive } from './askScraper';
@@ -78,14 +79,8 @@ export interface TmuxLike {
   resizeWindow?(name: string, cols: number, rows: number): Promise<void>;
 }
 
-export interface TranscriptLike {
-  /** 当前活动分支（已按 parentUuid 回溯）。 */
-  activeChain(): ChatMessage[];
-  /** 最后写入的主线 assistant 条目的 message.usage（HUD transcript 兜底数据源用）；无则 null。 */
-  lastAssistantUsage?(): Record<string, unknown> | null;
-  /** 重置偏移与累积树（重连/全量重读用）。 */
-  reset(): void;
-}
+// TranscriptLike 真身已上移到 ./agent/adapter(顶部 import + 此处 re-export 让既有路径不破)。
+export type { TranscriptLike };
 
 export interface ChatSessionDeps {
   tmux: TmuxLike;
@@ -220,7 +215,13 @@ export class ChatSession {
       // codex 不能预指定 UUID（presetSessionId=false）：首次启动后异步扫真实 UUID 并回写。
       // claude（presetSessionId=true）跳过——它的 UUID 启动时已经 --session-id 传死。
       if (!this.deps.adapter.capabilities.presetSessionId) {
-        void this.discoverAndPersistSessionId();
+        // .catch 防静默:onSessionIdResolved 会触发路由层落盘 I/O(Task 11),将来若抛
+        // 而无人 await,会变成 unhandled rejection 且"sessionId 未回写→tail 永远指占位
+        // →聊天历史空白"无任何日志。这里至少留 stderr 一行排障线索。
+        void this.discoverAndPersistSessionId().catch((e) => {
+          // eslint-disable-next-line no-console
+          console.warn('[chatSession] discoverAndPersistSessionId 失败:', e instanceof Error ? e.message : e);
+        });
       }
     }
     // 故意不 resize-window 强制归位:多 client(手机/电脑同时连)情况下,tmux 跟最小 attached client 走,
@@ -257,9 +258,8 @@ export class ChatSession {
     });
     if (real && real !== this.spec.sessionId) {
       this.spec.onSessionIdResolved?.(real);
-      // tail 经 setSessionId 钩子切换路径(codex tail 有此钩子,claude tail 没有)。
-      const tailAny = this.deps.tail as TranscriptLike & { setSessionId?: (sid: string) => void };
-      if (typeof tailAny.setSessionId === 'function') tailAny.setSessionId(real);
+      // tail 经 setSessionId 钩子切换路径(可选接口成员;codex tail 有,claude tail 没有)。
+      this.deps.tail.setSessionId?.(real);
     }
   }
 

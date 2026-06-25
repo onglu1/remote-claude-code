@@ -27,9 +27,8 @@ export interface ResumeOpts {
 }
 
 /**
- * chatSession.ts 既有 TranscriptLike 接口的同形声明。
- * 留在这里是为了避免 adapter.ts → chatSession.ts 的反向 import 在 Task 8
- * (chatSession 改用 adapter) 落地后形成循环。Task 8 时把真身上移到本文件、消掉副本。
+ * transcript tail 的统一接口。adapter.makeTranscriptTail 返回它,ChatSession 直接消费。
+ * 真身在此(Task 8 完成时从 chatSession.ts 上移过来,消掉同形副本)。
  */
 export interface TranscriptLike {
   /** 当前活动分支(claude 按 parentUuid 回溯,codex 线性按时间顺序);正序的可渲染消息。 */
@@ -38,6 +37,11 @@ export interface TranscriptLike {
   lastAssistantUsage?(): Record<string, unknown> | null;
   /** 重置偏移与累积树(重连/全量重读用)。 */
   reset(): void;
+  /**
+   * 切换 tail 指向的 sessionId(codex 首次启动后发现真实 UUID 时由 ChatSession 调)。
+   * claude tail 不实现(claude 是预指定 UUID,不需要切换)。
+   */
+  setSessionId?(sessionId: string): void;
 }
 
 /** discoverSessionId 入参（codex 首次启动后扫文件抓 UUID）。 */
