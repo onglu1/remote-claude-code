@@ -46,6 +46,17 @@ What it is **not**:
 
 聊天视图的实现:同一个原生 tmux 会话喂两路数据——轮询 `capture-pane` 读屏出**逐字流式预览**,监听 claude 自己写的 `transcript jsonl`(用 `--session-id <uuid>` 确定性定位)出**干净的结构化最终渲染**;输入用 `tmux send-keys`/`paste-buffer`;常驻按键条把真实按键发回 pane 驱动 TUI 内的选择菜单,必要时可展开「原始终端」兜底查看。因为终端视图也用同一个 `--session-id` 启动,两种视图共用同一个 tmux 会话、随意切换。
 
+### 多 Agent 支持(Claude / Codex)
+
+remote-cc 支持同时跑 Claude Code 与 OpenAI Codex CLI 两种 agent。新建会话时在弹窗里选 agent 类型并可自定义启动命令:
+
+- **Claude**(默认):默认启动命令 `Fable-yolo`(等价 `claude --dangerously-skip-permissions`),支持 HUD 用量、AskUserQuestion 富卡片、`/effort`、`/rewind` 等原生功能。
+- **Codex**:默认启动命令 `codex --yolo`(等价 `codex --dangerously-bypass-approvals-and-sandbox`)。恢复固定走模板 `codex resume --yolo <UUID>`,会话级自定义启动命令仅影响**首次启动**。codex **不接** HUD / AskUserQuestion / effort / rewind(这些是 claude 专属横切)。
+
+两种 agent 的会话都活在同一套 `tmux -L rcc` + transcript tail 机制里,聊天/终端两视图、tmux 持久化恢复对两者一致;前端侧栏用小字母 badge(C / X)区分。
+
+> **Codex 安全提醒**:`codex --yolo` 跳过 sandbox 与 approvals,与 claude 的 `--dangerously-skip-permissions` 同等级风险。仅在你信任的隔离环境里用,别对不信任的项目/输入开启。
+
 ### 架构
 
 ```

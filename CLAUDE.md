@@ -38,6 +38,15 @@
 - `apps/web` — React + Vite:终端 `Terminal.tsx` + 聊天 `components/chat/*`。
 - 会话进程活在独立 `tmux -L rcc`,与后端解耦。
 
+### 多 Agent 抽象(Claude / Codex)
+
+`AgentAdapter`(`apps/server/src/lib/session/chat/agent/`)封装 claude 与 codex 在"启动命令 / transcript 定位 / jsonl 解析 / 首次 sessionId 抓取"上的差异。`ChatSession` 按 `adapter.capabilities.{effort,askHook,hud,rewind,presetSessionId}` 决定走不走对应横切(没有 capability 就跳过,不报错)。新会话的 agent 类型存 `Conversation.agentKind`,会话级启动命令存 `Conversation.launchCommand`(留空走 adapter 默认;claude = 项目级 `launchCommand`,codex = 全局常量 `codex --yolo`)。
+
+- **claude**:`--session-id <uuid>` 启动、`--resume <uuid>` 恢复;transcript 在 `~/.claude/projects/<cwd>/<sessionId>.jsonl`;capability 全开(effort/askHook/hud/rewind/presetSessionId)。
+- **codex**:不能预设 sessionId,**首次启动后**异步扫 `~/.codex/sessions/YYYY/MM/DD/` 找 `rollout-*.jsonl` 文件名提取真实 UUID 回写 `Conversation.sessionId`(5min 超时)——因 codex rollout 是**懒创建**(要等用户提交首条消息触发 turn 才写盘,所以不能开机就找)。恢复固定模板 `codex resume --yolo <UUID>`,会话级 launchCommand 仅影响首次。capability 只留 transcript 解析,effort/askHook/hud/rewind/presetSessionId 全关。
+
+前端 `ChatView` 据 `agentKind` 隐藏 Hud/EffortPill/RewindPanel/LiveAskCard;sidebar `SidebarTree` 用小字母 badge(C / X)区分两种 agent 会话。
+
 ### 会话生命周期(休眠 + 文件夹 + 标星)
 
 - **会话三态**:**alive**(tmux 在)、**sleeping**(`closedAt` 存在,tmux 已关)、**deleted**(`deletedAt` 存在,在垃圾桶)。前端 SidebarTree 的"三态点"按这个直接映射(绿/灰/红 + 星叠加)。
