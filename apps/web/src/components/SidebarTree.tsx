@@ -272,6 +272,15 @@ export function SidebarTree(props: SidebarTreeProps) {
                     <span className={`dot ${cls}`} aria-label={cls} />
                   )}
                   {c.starred && <span className="star" aria-label="加星">★</span>}
+                  {/* agent 小字母 badge:C=claude / X=codex,一眼区分会话类型。
+                      与 dot/star 同为 flex:none 兄弟,永不被会话名挤掉(小屏友好)。 */}
+                  <span
+                    className={`sidebar-agent-badge ${c.agentKind}`}
+                    title={c.agentKind === 'claude' ? 'Claude 会话' : 'Codex 会话'}
+                    aria-label={c.agentKind === 'claude' ? 'Claude 会话' : 'Codex 会话'}
+                  >
+                    {c.agentKind === 'claude' ? 'C' : 'X'}
+                  </span>
                   {editing && renderEditor ? (
                     <div className="sidebar-edit grow">{renderEditor(c)}</div>
                   ) : (

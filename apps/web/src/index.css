@@ -1870,6 +1870,22 @@ select.input {
 .sidebar-item .star { color: var(--warn); font-size: 14px; flex: none; }
 .sidebar-item .dot.sleeping { background: var(--line-strong); }
 .sidebar-item .dot.dead { background: var(--danger); opacity: 0.55; }
+/* agent 小字母 badge(C=claude / X=codex):辅助视觉,小巧、flex:none 不挤会话名。
+   配色复用纸张色板 token(claude=暖琥珀 --warn / codex=墨绿 --ok)以保持主题一致;
+   如后续需要独立主题切换,可把这两个色挪到 tokens.css 出专用变量。 */
+.sidebar-agent-badge {
+  flex: none;
+  display: inline-block;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  color: #fff;
+  letter-spacing: 0.5px;
+}
+.sidebar-agent-badge.claude { background: var(--warn); }
+.sidebar-agent-badge.codex { background: var(--ok); }
 .sidebar-item-open {
   background: none; border: none; text-align: left; padding: 0;
   color: var(--ink); min-width: 0; cursor: pointer;
