@@ -3,6 +3,8 @@ dist/
 .env
 .env.local
 *.bak
+# 带后缀的 .bak 也算备份 (.bak.YYYY-MM-DD、.bak-convert-xxx 等迁移脚本产物)
+*.bak[.-]*
 *.rcc-bak
 *.log
 .DS_Store
@@ -18,6 +20,9 @@ rcc-statusline/
 config/conversations.json
 config/projects.json
 config/users.json
+# 子用户(N:1 挂主账号)与文件夹分组,都是私本运行时数据
+config/subusers.json
+config/folders.json
 data/
 # 开发用 git worktree（隔离工作区，不进库）
 .worktrees/
