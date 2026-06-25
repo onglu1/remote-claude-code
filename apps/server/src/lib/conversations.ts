@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { type Conversation } from '@rcc/shared';
+import { type Conversation, type AgentKind } from '@rcc/shared';
 import { Tmux } from './session/tmux';
 
 type StoredConversation = Omit<Conversation, 'alive'>;
@@ -22,10 +22,14 @@ export class ConversationStore {
 
   private loadAll(): StoredConversation[] {
     // 防御性补全：正常情况下 migrate() 已确保每条都有 sessionId；旧记录补 effort 默认。
+    // agentKind/codexSessionDiscovered 是 codex 支持新增的字段，老 conversations.json 没有
+    // → 回填默认(沿用 sessionId/effort 的防御性补全模式，零数据迁移脚本)。
     return this.loadRaw().map((c) => ({
       ...(c as StoredConversation),
       sessionId: c.sessionId ?? crypto.randomUUID(),
       effort: c.effort ?? 'max',
+      agentKind: c.agentKind ?? 'claude',
+      codexSessionDiscovered: c.codexSessionDiscovered ?? false,
     }));
   }
 
@@ -81,8 +85,15 @@ export class ConversationStore {
    * 新建会话。
    * @param sessionId 可选:指定一个已存在的 claude session UUID,新会话会以 --resume 接续那段 transcript。
    *                  缺省时随机生成新 UUID(首次启动用 --session-id)。
+   * @param opts 可选:agent 选择与会话级 launchCommand。
+   *             agentKind 缺省 'claude';launchCommand 缺省 undefined(走 adapter 默认)。
    */
-  create(projectId: string, name: string, sessionId?: string): StoredConversation {
+  create(
+    projectId: string,
+    name: string,
+    sessionId?: string,
+    opts?: { agentKind?: AgentKind; launchCommand?: string },
+  ): StoredConversation {
     const all = this.loadAll();
     const id = crypto.randomBytes(4).toString('hex');
     const conv: StoredConversation = {
@@ -96,6 +107,12 @@ export class ConversationStore {
       effort: 'max',
       // 标星默认 false;迁移逻辑也补这个字段,但新建路径要显式写,否则 schema 推断会要求必填。
       starred: false,
+      // agent 选择:缺省 claude(原生路径行为零变化);codex 走第 4 参数显式传入。
+      agentKind: opts?.agentKind ?? 'claude',
+      // 会话级 launchCommand:留空 = 走 adapter 默认(claude 用 Project.launchCommand;codex 用全局常量)。
+      launchCommand: opts?.launchCommand,
+      // codex 会话 UUID 首次发现后才回写为 true;claude 恒为 false(用不上)。
+      codexSessionDiscovered: false,
       createdAt: new Date().toISOString(),
       // lastActivityAt 与 createdAt 相同,便于前端按"最近活跃"排序时新会话也有值。
       lastActivityAt: new Date().toISOString(),

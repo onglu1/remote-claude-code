@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -115,5 +118,55 @@ describe('ConversationStore.listAllAlive', () => {
     const alive = store.listAllAlive();
     expect(alive.map((x) => x.id)).toEqual([a.id]);
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('ConversationStore agentKind/launchCommand', () => {
+  let store: ConversationStore;
+  let tmp: string;
+  beforeEach(() => {
+    tmp = path.join(os.tmpdir(), `rcc-conv-${Date.now()}-${Math.random()}`);
+    store = new ConversationStore(path.join(tmp, 'conv.json'));
+  });
+  afterEach(() => {
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ok */ }
+  });
+
+  it('create 默认 agentKind=claude、launchCommand=undefined', () => {
+    const c = store.create('p1', '');
+    expect(c.agentKind).toBe('claude');
+    expect(c.launchCommand).toBeUndefined();
+    expect(c.codexSessionDiscovered).toBe(false);
+  });
+
+  it('create 显式 agentKind/launchCommand 落地', () => {
+    const c = store.create('p1', '', undefined, { agentKind: 'codex', launchCommand: 'codex --yolo' });
+    expect(c.agentKind).toBe('codex');
+    expect(c.launchCommand).toBe('codex --yolo');
+  });
+
+  it('loadAll 对老数据缺字段做防御性补全', () => {
+    // 手写一份"老格式"数据(没 agentKind / codexSessionDiscovered)
+    fs.mkdirSync(tmp, { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, 'conv.json'),
+      JSON.stringify([{
+        id: 'old1', projectId: 'p1', name: 'legacy',
+        tmuxName: 't', sessionId: '11111111-1111-1111-1111-111111111111',
+        createdAt: '2026-06-20T00:00:00.000Z',
+      }], null, 2),
+    );
+    const list = store.listByProject('p1');
+    expect(list[0].agentKind).toBe('claude');
+    expect(list[0].codexSessionDiscovered).toBe(false);
+    expect(list[0].launchCommand).toBeUndefined();
+  });
+
+  it('update 能改 sessionId 和 codexSessionDiscovered(codex 首次回写场景)', () => {
+    const c = store.create('p1', '', undefined, { agentKind: 'codex' });
+    const newSid = '22222222-2222-2222-2222-222222222222';
+    const updated = store.update(c.id, { sessionId: newSid, codexSessionDiscovered: true });
+    expect(updated?.sessionId).toBe(newSid);
+    expect(updated?.codexSessionDiscovered).toBe(true);
   });
 });
