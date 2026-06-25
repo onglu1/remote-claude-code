@@ -1,7 +1,7 @@
 /**
  * 终端历史阅读层的纯窗口换算。把「显示下标(0=最旧)」窗口映射到 tmux capture-pane 的 -S/-E 行号。
  *
- * 实测语义(见 docs/superpowers/specs/2026-06-21-terminal-native-scroll-copy-design.md)：
+ * 实测语义：
  *   T = historySize + paneHeight；显示下标 d → tmux 行号 L = d - historySize；
  *   最旧行 -historySize，最底行 paneHeight-1；capture -S -<H> -E <P-1> 取全部 T 行。
  *

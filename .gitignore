@@ -27,6 +27,8 @@ data/
 # 开发用 git worktree（隔离工作区，不进库）
 .worktrees/
 logs/
+# superpowers skill 生成的设计/计划临时文档,本地保留备查、不进 git
+docs/
 
 # 本机部署/启动脚本：每台机器都不一样（端口、tmux 名、cron、HUD 注入、隧道...）
 # 仓库只发 start.example.sh 模板；用户复制为 start.sh 再按本机情况改

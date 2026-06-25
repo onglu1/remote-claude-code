@@ -44,7 +44,7 @@ What it is **not**:
 - **聊天视图**(默认):像原生 AI 网页那样对话——消息气泡、Markdown、平滑滚动、文字可选可复制、逐 token 流式、工具调用折叠卡片。**服务器侧跑的就是 100% 原生交互式 Claude Code**(斜杠命令/skill 原生支持、无任何 headless/自动化路径的行为差异)。
 - **终端视图**:xterm.js 直传 TUI 字节流——完整终端、所有快捷键,适合桌面/重度操作。
 
-聊天视图的实现:同一个原生 tmux 会话喂两路数据——轮询 `capture-pane` 读屏出**逐字流式预览**,监听 claude 自己写的 `transcript jsonl`(用 `--session-id <uuid>` 确定性定位)出**干净的结构化最终渲染**;输入用 `tmux send-keys`/`paste-buffer`;常驻按键条把真实按键发回 pane 驱动 TUI 内的选择菜单,必要时可展开「原始终端」兜底查看。因为终端视图也用同一个 `--session-id` 启动,两种视图共用同一个 tmux 会话、随意切换。设计细节见 `docs/superpowers/specs/2026-06-20-native-chat-ui-rebuild-design.md`。
+聊天视图的实现:同一个原生 tmux 会话喂两路数据——轮询 `capture-pane` 读屏出**逐字流式预览**,监听 claude 自己写的 `transcript jsonl`(用 `--session-id <uuid>` 确定性定位)出**干净的结构化最终渲染**;输入用 `tmux send-keys`/`paste-buffer`;常驻按键条把真实按键发回 pane 驱动 TUI 内的选择菜单,必要时可展开「原始终端」兜底查看。因为终端视图也用同一个 `--session-id` 启动,两种视图共用同一个 tmux 会话、随意切换。
 
 ### 架构
 

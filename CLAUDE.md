@@ -13,7 +13,7 @@
 
 ## 工程纪律（superpowers）
 
-- 动手前先 **brainstorming** 出设计 → **writing-plans** 出计划;设计/计划存 `docs/superpowers/{specs,plans}/`。
+- 动手前先 **brainstorming** 出设计 → **writing-plans** 出计划;设计/计划本地存 `docs/superpowers/{specs,plans}/`(gitignore,不进库——是 skill 生成的过程产物,价值在写的当下)。
 - **TDD**:后端 `apps/server` 与 `packages/shared` 用 vitest **测试与源码共置**(`*.test.ts`);纯逻辑(解析/拼装)抽成纯函数单测,IO/外部命令用注入的 fake。
 - **频繁小步提交**;提交信息中文、说清「为什么」。
 - **用真实集成验证,不只单测**:涉及 tmux/claude 的改动,跑真实冒烟(见 `apps/server/scripts/smoke-chat.ts`)确认端到端,再声称完成。
@@ -50,7 +50,7 @@
 
 ### 多用户身份(unix 隔离 + 子用户)
 
-- **三层模型**:**Unix 用户**(物理 OS 账号,各自 `~/.claude`)→ **rcc 主账号**(1:1 绑 unix 用户,`users.json` 有 `unixUser` 字段)→ **子用户**(N:1 挂在主账号下,`subusers.json`,独立用户名/口令登录,unix 身份继承父,资源 namespace=自己)。详见 `docs/superpowers/specs/2026-06-23-multi-user-unix-isolation-design.md`。
+- **三层模型**:**Unix 用户**(物理 OS 账号,各自 `~/.claude`)→ **rcc 主账号**(1:1 绑 unix 用户,`users.json` 有 `unixUser` 字段)→ **子用户**(N:1 挂在主账号下,`subusers.json`,独立用户名/口令登录,unix 身份继承父,资源 namespace=自己)。
 - **命令包装**(`lib/session/runAs.ts`):所有 tmux/claude/stat/cat 调用过 `runAs(unixUser, file, args)`。**零开销路径**:目标 unix === ServiceUser 时直 exec(等同单用户老逻辑,行为零变化);跨 unix 时拼 `sudo -n -H -u <user> --`(non-interactive 配错立刻报错,-H 切 HOME 让 claude 读对方 `~/.claude`)。
 - **Tmux 实例化绑 unixUser**:`new Tmux({ socket, unixUser, currentUser })`;socket 名 `rcc-<unixUser>`(跨 unix tmux server 各自一份),内部所有 exec 走 `runAs`。`AppContext.getTmux(unixUser)` lazy 缓存。
 - **AuthUser 字段**:`{ id, username, role, kind: 'user'|'subuser', parentId?, unixUser, namespaceId }`。**namespaceId** 是资源归属 key:主账号=user.id,子用户=subUser.id(子用户与父独立,与同父其他子用户也独立);`canSeeProject` / projects / folders 全部按 namespaceId 比对。`req.user.unixUser` 用于命令包装,`req.user.namespaceId` 用于归属过滤。
@@ -62,6 +62,6 @@
 
 ### 聊天模式实现要点
 
-同一个原生 tmux 会话喂两路:轮询 `capture-pane` 经 `paneScraper` 去 chrome 出**逐字流式预览**;`TranscriptTail` 监听 claude 写的 `~/.claude/projects/<cwd>/<sessionId>.jsonl`(用 `find … -name <sessionId>.jsonl` 定位)出**结构化消息**。输入用 `tmux send-keys`/`paste-buffer`;`KeyBar` 发真实按键驱动 TUI 菜单,`TerminalPeek` 兜底看原始屏。详见 `docs/superpowers/specs/2026-06-20-native-chat-ui-rebuild-design.md`。
+同一个原生 tmux 会话喂两路:轮询 `capture-pane` 经 `paneScraper` 去 chrome 出**逐字流式预览**;`TranscriptTail` 监听 claude 写的 `~/.claude/projects/<cwd>/<sessionId>.jsonl`(用 `find … -name <sessionId>.jsonl` 定位)出**结构化消息**。输入用 `tmux send-keys`/`paste-buffer`;`KeyBar` 发真实按键驱动 TUI 菜单,`TerminalPeek` 兜底看原始屏。
 
-**选择题(AskUserQuestion)走 hook 真值,不读屏**:启动 claude 时经 `--settings`(叠加,不动全局配置)注册 `scripts/hooks/rcc-ask-hook.mjs` 的 `PreToolUse`/`PostToolUse`(matcher 精确 `AskUserQuestion`)+ env `RCC_ASK_DIR`。Pre 把工具输入(问题/选项/说明/多选)原子写 `$RCC_ASK_DIR/<sessionId>.json`、Post 删之;`chatSession.tick` 读 sidecar 出**富卡片**(`LiveAskCard`),作答用 `AskDriver` 的**绝对数字键**(按编号选、不受光标位置影响,挪光标也不点歪),完成由 sidecar 消失(PostToolUse)确认。`askDir` 未配时整条退回既有读屏 `parseAskPickerLive`/`AskController` 兜底。**单选单问题是一等公民**(已真机冒烟);**多选、多问题为最佳努力/实验性**(多选统一降级 AskController;多问题仅单测覆盖、真机未验),拿不准时终端/KeyBar 手动作答始终可用。详见 `docs/superpowers/specs/2026-06-21-chat-ask-hook-driven-design.md`。
+**选择题(AskUserQuestion)走 hook 真值,不读屏**:启动 claude 时经 `--settings`(叠加,不动全局配置)注册 `scripts/hooks/rcc-ask-hook.mjs` 的 `PreToolUse`/`PostToolUse`(matcher 精确 `AskUserQuestion`)+ env `RCC_ASK_DIR`。Pre 把工具输入(问题/选项/说明/多选)原子写 `$RCC_ASK_DIR/<sessionId>.json`、Post 删之;`chatSession.tick` 读 sidecar 出**富卡片**(`LiveAskCard`),作答用 `AskDriver` 的**绝对数字键**(按编号选、不受光标位置影响,挪光标也不点歪),完成由 sidecar 消失(PostToolUse)确认。`askDir` 未配时整条退回既有读屏 `parseAskPickerLive`/`AskController` 兜底。**单选单问题是一等公民**(已真机冒烟);**多选、多问题为最佳努力/实验性**(多选统一降级 AskController;多问题仅单测覆盖、真机未验),拿不准时终端/KeyBar 手动作答始终可用。

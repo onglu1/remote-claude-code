@@ -16,5 +16,3 @@
     npm -w @rcc/research-core run research -- doctor <dir>
 
 完整知识图存储与其余 CLI 动词（add/link/supersede/invalidate/contradict/brief/show…）见后续「骨干层」。
-
-设计依据：`docs/superpowers/specs/2026-06-22-research-workflow-system-design.md`。
