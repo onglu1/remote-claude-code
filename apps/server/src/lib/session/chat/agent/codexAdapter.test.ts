@@ -9,6 +9,30 @@ const adapter = makeCodexAdapter({
   homeFor: (u: string) => (u === os.userInfo().username ? os.homedir() : `/home/${u}`),
 });
 
+function todayDir(home: string): string {
+  const d = new Date();
+  return path.join(
+    home, '.codex', 'sessions',
+    String(d.getFullYear()),
+    String(d.getMonth() + 1).padStart(2, '0'),
+    String(d.getDate()).padStart(2, '0'),
+  );
+}
+
+function writeRollout(home: string, sid: string, cwd: string, lines: string[] = [], ts = Date.now()): string {
+  const dir = todayDir(home);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `rollout-${ts}-${sid}.jsonl`);
+  const meta = JSON.stringify({
+    timestamp: new Date(ts).toISOString(),
+    type: 'session_meta',
+    payload: { session_id: sid, cwd },
+  });
+  fs.writeFileSync(file, [meta, ...lines].join('\n') + '\n');
+  fs.utimesSync(file, new Date(ts), new Date(ts));
+  return file;
+}
+
 describe('codexAdapter', () => {
   it('kind=codex,capabilities 全 false', () => {
     expect(adapter.kind).toBe('codex');
@@ -37,22 +61,26 @@ describe('codexAdapter', () => {
   it('locateTranscript:命中 UUID 对应文件;未命中返回 null', () => {
     const tmpHome = path.join(os.tmpdir(), `rcc-codex-locate-${Date.now()}-${Math.random()}`);
     const sid = '33333333-3333-3333-3333-333333333333';
-    const d = new Date();
-    const dir = path.join(
-      tmpHome, '.codex', 'sessions',
-      String(d.getFullYear()),
-      String(d.getMonth() + 1).padStart(2, '0'),
-      String(d.getDate()).padStart(2, '0'),
-    );
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, `rollout-${Date.now()}-${sid}.jsonl`);
-    fs.writeFileSync(file, '');
+    const cwd = '/tmp/project-a';
+    const file = writeRollout(tmpHome, sid, cwd);
     const adapterT = makeCodexAdapter({
       serviceUser: os.userInfo().username,
       homeFor: () => tmpHome,
     });
-    expect(adapterT.locateTranscript(sid, os.userInfo().username, '/tmp')).toBe(file);
+    expect(adapterT.locateTranscript(sid, os.userInfo().username, cwd)).toBe(file);
     expect(adapterT.locateTranscript('44444444-4444-4444-4444-444444444444', os.userInfo().username, '/tmp')).toBeNull();
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  it('locateTranscript:同 UUID 但 cwd 不匹配时返回 null', () => {
+    const tmpHome = path.join(os.tmpdir(), `rcc-codex-locate-cwd-${Date.now()}-${Math.random()}`);
+    const sid = '34343434-3434-3434-3434-343434343434';
+    writeRollout(tmpHome, sid, '/mnt/llm_eval_fi/moe-ft');
+    const adapterT = makeCodexAdapter({
+      serviceUser: os.userInfo().username,
+      homeFor: () => tmpHome,
+    });
+    expect(adapterT.locateTranscript(sid, os.userInfo().username, '/mnt/wangleyan/workspace/thesis')).toBeNull();
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
@@ -60,27 +88,26 @@ describe('codexAdapter', () => {
     const tmpHome = path.join(os.tmpdir(), `rcc-codex-tail-${Date.now()}-${Math.random()}`);
     const sid1 = '55555555-5555-5555-5555-555555555555';
     const sid2 = '66666666-6666-6666-6666-666666666666';
-    const d = new Date();
-    const dir = path.join(
-      tmpHome, '.codex', 'sessions',
-      String(d.getFullYear()),
-      String(d.getMonth() + 1).padStart(2, '0'),
-      String(d.getDate()).padStart(2, '0'),
+    const cwd = '/tmp/project-tail';
+    writeRollout(
+      tmpHome,
+      sid1,
+      cwd,
+      [JSON.stringify({ timestamp: 't', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'sid1-msg' }] } })],
+      Date.now(),
     );
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, `rollout-${Date.now()}-${sid1}.jsonl`),
-      JSON.stringify({ timestamp: 't', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'sid1-msg' }] } }) + '\n',
-    );
-    fs.writeFileSync(
-      path.join(dir, `rollout-${Date.now() + 1}-${sid2}.jsonl`),
-      JSON.stringify({ timestamp: 't', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'sid2-msg' }] } }) + '\n',
+    writeRollout(
+      tmpHome,
+      sid2,
+      cwd,
+      [JSON.stringify({ timestamp: 't', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'sid2-msg' }] } })],
+      Date.now() + 1,
     );
     const adapterT = makeCodexAdapter({
       serviceUser: os.userInfo().username,
       homeFor: () => tmpHome,
     });
-    const tail = adapterT.makeTranscriptTail(sid1, os.userInfo().username, '/tmp');
+    const tail = adapterT.makeTranscriptTail(sid1, os.userInfo().username, cwd);
     expect(tail.activeChain()[0]?.blocks[0]).toMatchObject({ type: 'text', text: 'sid1-msg' });
     const tailExt = tail as typeof tail & { setSessionId?: (sid: string) => void };
     expect(typeof tailExt.setSessionId).toBe('function');
@@ -99,24 +126,39 @@ describe('codexAdapter', () => {
     const sid = '22222222-2222-2222-2222-222222222222';
     // 异步在 200ms 后写文件,模拟 codex 启动后写出 rollout
     setTimeout(() => {
-      const d = new Date();
-      const dir = path.join(
-        tmpHome, '.codex', 'sessions',
-        String(d.getFullYear()),
-        String(d.getMonth() + 1).padStart(2, '0'),
-        String(d.getDate()).padStart(2, '0'),
-      );
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, `rollout-${Date.now()}-${sid}.jsonl`), '{}\n');
+      writeRollout(tmpHome, sid, '/tmp/current-project');
     }, 200);
     const got = await adapterT.discoverSessionId({
       tentativeSessionId: 'placeholder',
       unixUser: os.userInfo().username,
-      cwd: '/tmp',
+      cwd: '/tmp/current-project',
       timeoutMs: 2000,
       startedAt,
     });
     expect(got).toBe(sid);
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  it('discoverSessionId:忽略同 HOME 下更晚写入但 cwd 不匹配的 rollout', async () => {
+    const tmpHome = path.join(os.tmpdir(), `rcc-codex-disc-cwd-${Date.now()}-${Math.random()}`);
+    const adapterT = makeCodexAdapter({
+      serviceUser: os.userInfo().username,
+      homeFor: () => tmpHome,
+    });
+    const startedAt = Date.now() - 10;
+    const currentSid = '77777777-7777-7777-7777-777777777777';
+    const otherSid = '88888888-8888-8888-8888-888888888888';
+    writeRollout(tmpHome, currentSid, '/mnt/wangleyan/workspace/thesis', [], startedAt + 50);
+    writeRollout(tmpHome, otherSid, '/mnt/llm_eval_fi/moe-ft', [], startedAt + 100);
+
+    const got = await adapterT.discoverSessionId({
+      tentativeSessionId: 'placeholder',
+      unixUser: os.userInfo().username,
+      cwd: '/mnt/wangleyan/workspace/thesis',
+      timeoutMs: 300,
+      startedAt,
+    });
+    expect(got).toBe(currentSid);
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 

@@ -114,7 +114,8 @@ export class ConversationStore {
       // 会话级 launchCommand:留空 = 走 adapter 默认(claude 用 Project.launchCommand;codex 用全局常量)。
       launchCommand: opts?.launchCommand,
       // codex 会话 UUID 首次发现后才回写为 true;claude 恒为 false(用不上)。
-      // 用户显式传入续接的 codex UUID 时,opts.codexSessionDiscovered=true 跳过扫描。
+      // 用户显式传入续接的 codex UUID 时,opts.codexSessionDiscovered=true 只记录来源;
+      // 是否 resume 仍由 adapter 在当前 cwd 下定位 transcript 决定。
       codexSessionDiscovered: opts?.codexSessionDiscovered ?? false,
       createdAt: new Date().toISOString(),
       // lastActivityAt 与 createdAt 相同,便于前端按"最近活跃"排序时新会话也有值。
@@ -137,6 +138,11 @@ export class ConversationStore {
   /** 仅更新 lastActivityAt;比 update 路径轻,活动探测器高频调用专用。 */
   markActivity(convId: string, ts: string): StoredConversation | undefined {
     return this.update(convId, { lastActivityAt: ts });
+  }
+
+  /** 会话被用户重新进入/显式恢复:清休眠标记并刷新活动时间。 */
+  markActive(convId: string, ts: string): StoredConversation | undefined {
+    return this.update(convId, { closedAt: undefined, lastActivityAt: ts });
   }
 
   /** 软删除:打 deletedAt 戳,不真的删 metadata,可恢复。 */

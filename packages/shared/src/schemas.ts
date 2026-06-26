@@ -8,6 +8,20 @@ export type ProjectType = z.infer<typeof ProjectTypeSchema>;
 export const AgentKindSchema = z.enum(['claude', 'codex']);
 export type AgentKind = z.infer<typeof AgentKindSchema>;
 
+/** 单个 agent 的使用白名单策略。enabled=false 表示不限制。 */
+export const AgentAccessRuleSchema = z.object({
+  enabled: z.boolean().default(false),
+  allowedPrincipalIds: z.array(z.string().min(1)).default([]),
+});
+export type AgentAccessRule = z.infer<typeof AgentAccessRuleSchema>;
+
+/** Claude Code / Codex 分开的使用白名单设置。 */
+export const AgentAccessConfigSchema = z.object({
+  claude: AgentAccessRuleSchema.default({ enabled: false, allowedPrincipalIds: [] }),
+  codex: AgentAccessRuleSchema.default({ enabled: false, allowedPrincipalIds: [] }),
+});
+export type AgentAccessConfig = z.infer<typeof AgentAccessConfigSchema>;
+
 /**
  * 用户角色：管理员看全部+管理用户；普通用户只看自己的项目/会话。
  * 这是「应用层账号」分类（为视图干净），非安全边界。

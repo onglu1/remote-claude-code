@@ -44,6 +44,10 @@ export function Terminal({
   const fitFnRef = useRef<(() => void) | null>(null);
   const [connected, setConnected] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
+  const isClaude = conversation.agentKind === 'claude';
+  const agentLabel = isClaude ? 'Claude Code' : 'Codex';
+  const assistantLabel = isClaude ? 'Claude' : 'Codex';
+  const resumeLabel = isClaude ? '--resume' : 'codex resume';
 
   useEffect(() => {
     const term = new Xterm({
@@ -200,10 +204,10 @@ export function Terminal({
   const reflowTerminal = async () => {
     if (reflowBusy) return;
     const ok = window.confirm(
-      '重排会中断当前 AI 会话:\n' +
-        '· 正在执行的工具调用 / 生成 / AskUserQuestion 全部丢失\n' +
+      `重排会中断当前 ${agentLabel} 会话:\n` +
+        '· 正在执行的工具调用 / 生成 / 待答选择全部丢失\n' +
         '· 旧 scrollback 一起清空,但对话历史保留在 transcript 文件里\n' +
-        '· 新 pane 启动后会 --resume 接续对话,后续输出按当前宽度\n\n' +
+        `· 新 pane 启动后会用 ${resumeLabel} 接续对话,后续输出按当前宽度\n\n` +
         '确定重排吗?',
     );
     if (!ok) return;
@@ -269,7 +273,7 @@ export function Terminal({
           className="btn ghost sm"
           onClick={reflowTerminal}
           disabled={reflowBusy}
-          title="重排(杀 tmux+claude --resume;按当前宽度重起;⚠️ 会中断当前 AI 任务)"
+          title={`重排(杀 tmux+${assistantLabel} resume;按当前宽度重起;⚠️ 会中断当前 ${agentLabel} 任务)`}
         >
           {reflowBusy ? '重启中…' : '重排'}
         </button>

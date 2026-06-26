@@ -65,12 +65,12 @@ export function ConversationList({
     }
   };
 
-  // 按 claude session UUID 接续:让用户输入一个旧的 sessionId,后端用同 UUID 起新会话,
+  // 按 Claude session UUID 接续:让用户输入一个旧的 sessionId,后端用同 UUID 起新会话,
   // ensure 时 transcript 已存在 → --resume 接续那段对话。手机优先用 prompt() 够用。
   const createBySessionId = async () => {
     if (busy) return;
     const raw = window.prompt(
-      '粘贴要接续的 claude session UUID:\n(可在 ~/.claude/projects/<cwd>/<sessionId>.jsonl 找到;或在另一台机的会话详情里复制)',
+      '粘贴要接续的 Claude session UUID:\n(可在 ~/.claude/projects/<cwd>/<sessionId>.jsonl 找到;Codex 接续请用「新建会话」弹窗选择 Codex)',
       '',
     );
     if (!raw) return;
@@ -212,7 +212,7 @@ export function ConversationList({
   return (
     <div>
       {convs.length === 0 && (
-        <div className="empty">还没有会话。新建一个会话即开启一个常驻的 Claude Code；进入后可在聊天/终端视图间随时切换。</div>
+        <div className="empty">还没有会话。新建时可选择 Claude Code 或 Codex；进入后可在聊天/终端视图间随时切换。</div>
       )}
       <MultiSelectToolbar
         selectedIds={Array.from(selected)}
@@ -270,9 +270,9 @@ export function ConversationList({
         style={{ marginTop: 'var(--sp-2)' }}
         onClick={createBySessionId}
         disabled={busy}
-        title="新建一个会话并以 --resume 接续指定 session UUID"
+        title="新建一个 Claude 会话并以 --resume 接续指定 session UUID"
       >
-        ↺ 按 session ID 接续…
+        ↺ 按 Claude session ID 接续…
       </button>
 
       <button

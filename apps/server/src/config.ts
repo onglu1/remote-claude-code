@@ -45,6 +45,8 @@ export type Config = {
   conversationsConfigPath: string;
   /** 会话文件夹 JSON 存储路径(与 conversations.json 同目录)。 */
   foldersConfigPath: string;
+  /** agent 使用白名单 JSON 存储路径(与 projects.json 同目录)。 */
+  agentAccessConfigPath: string;
   usersConfigPath: string;
   fsBrowseRoot: string;
   /** statusLine sidecar 目录的绝对路径（聊天 HUD 独立数据源）。 */
@@ -92,6 +94,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     projectsConfigPath,
     conversationsConfigPath: path.join(path.dirname(projectsConfigPath), 'conversations.json'),
     foldersConfigPath: path.join(path.dirname(projectsConfigPath), 'folders.json'),
+    agentAccessConfigPath: path.join(path.dirname(projectsConfigPath), 'agent-access.json'),
     usersConfigPath: path.join(path.dirname(projectsConfigPath), 'users.json'),
     fsBrowseRoot: parsed.FS_BROWSE_ROOT,
     statuslineDir: parsed.RCC_STATUSLINE_DIR

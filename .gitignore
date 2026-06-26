@@ -20,6 +20,7 @@ rcc-statusline/
 config/conversations.json
 config/projects.json
 config/users.json
+config/agent-access.json
 # 子用户(N:1 挂主账号)与文件夹分组,都是私本运行时数据
 config/subusers.json
 config/folders.json

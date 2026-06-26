@@ -68,6 +68,10 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     }));
   }
 
+  function markConversationActive(convId: string) {
+    return ctx.conversations.markActive(convId, new Date().toISOString());
+  }
+
   // ---- 会话元数据 REST ----
   app.get(
     '/api/projects/:id/conversations',
@@ -95,10 +99,14 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       if (!parse.success) {
         return reply.code(400).send({ error: parse.error.issues[0]?.message ?? 'bad request' });
       }
+      const requestedAgent = parse.data.agentKind ?? 'claude';
+      if (!ctx.agentAccess.canUse(req.user!, requestedAgent)) {
+        return reply.code(403).send({ error: 'agent_access_denied' });
+      }
       // 显式指定 sessionId 时:首次拉起 ensure() 会检测 transcript 已存在 → --resume,接续旧对话。
       // agentKind/launchCommand 透传 ConversationStore(缺省 claude + 走 adapter 默认,行为零变化)。
-      // codex + 用户显式传 sessionId:置 codexSessionDiscovered=true,跳过 chatSession 启动后
-      // 5min 扫描真实 UUID(因为传入的就是真实的)、让 hasTranscript 直接信任并走 resume 命令。
+      // codex + 用户显式传 sessionId:置 codexSessionDiscovered=true 仅记录"传入的是候选真实 UUID"。
+      // 是否 resume 仍必须由 adapter 在当前项目 cwd 下定位到对应 transcript 决定。
       const explicitCodexResume =
         !!parse.data.sessionId && (parse.data.agentKind ?? 'claude') === 'codex';
       const conv = ctx.conversations.create(id, parse.data.name ?? '', parse.data.sessionId, {
@@ -249,15 +257,18 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       if (!conv || conv.projectId !== id) {
         return reply.code(404).send({ error: 'conversation not found' });
       }
-      if (!conv.closedAt) return { conversation: { ...conv, alive: await aliveOf(req.user!.unixUser, conv) } };
+      if (!ctx.agentAccess.canUse(req.user!, conv.agentKind)) {
+        return reply.code(403).send({ error: 'agent_access_denied' });
+      }
+      if (!conv.closedAt) {
+        const active = markConversationActive(cid) ?? conv;
+        return { conversation: { ...active, alive: await aliveOf(req.user!.unixUser, active) } };
+      }
       // 走 adapter:claude 输出与既有 buildClaudeCmd 一字不差;codex 拼 codex 子命令。
       const adapter = pickAdapter(conv.agentKind);
       const launchCommand = resolveLaunchCommand(conv, project);
-      // codex 显式 discovered(用户传入续接的真实 UUID 或首次扫到回写过)兜底走 resume——
-      // 即使本地扫不到文件,也用 `codex resume --yolo <UUID>` 让 CLI 自己定位,失败它会报。
       const hasTranscript =
-        adapter.locateTranscript(conv.sessionId, req.user!.unixUser, project.path) !== null ||
-        conv.codexSessionDiscovered === true;
+        adapter.locateTranscript(conv.sessionId, req.user!.unixUser, project.path) !== null;
       // askLaunch 仅 claude 有意义(codex adapter 内部忽略);不按 capability 分支,逻辑一致。
       const askLaunch = ctx.askLaunchFor(req.user!.unixUser);
       const cmd = hasTranscript
@@ -268,7 +279,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       } catch (e) {
         return reply.code(500).send({ error: `resume failed: ${(e as Error).message}` });
       }
-      const updated = ctx.conversations.update(cid, { closedAt: undefined });
+      const updated = markConversationActive(cid) ?? conv;
       return { conversation: { ...updated, alive: true } };
     },
   );
@@ -391,6 +402,9 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       if (!conv || conv.projectId !== id || conv.deletedAt) {
         return reply.code(404).send({ error: 'conversation not found' });
       }
+      if (!ctx.agentAccess.canUse(req.user!, conv.agentKind)) {
+        return reply.code(403).send({ error: 'agent_access_denied' });
+      }
       // 解析 cols/rows:前端传当前视图实际尺寸,落在合理范围(2..1000)。缺省 detached 默认 120×40。
       const q = req.query as { cols?: string; rows?: string };
       const cols = Math.min(Math.max(parseInt(q.cols ?? '120', 10) || 120, 2), 1000);
@@ -435,10 +449,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       const targetTmux = ctx.getTmux(req.user!.unixUser);
       const adapter = pickAdapter(conv.agentKind);
       const launchCommand = resolveLaunchCommand(conv, project);
-      // codex 显式 discovered 兜底走 resume(同 /resume 路由的判断,见上文)。
       const hasTranscript =
-        adapter.locateTranscript(conv.sessionId, req.user!.unixUser, project.path) !== null ||
-        conv.codexSessionDiscovered === true;
+        adapter.locateTranscript(conv.sessionId, req.user!.unixUser, project.path) !== null;
       const cmd = hasTranscript
         ? adapter.buildResumeCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort, askLaunch: ctx.askLaunchFor(req.user!.unixUser) })
         : adapter.buildLaunchCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort, askLaunch: ctx.askLaunchFor(req.user!.unixUser) });
@@ -497,6 +509,10 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
         socket.close(1011, 'not found');
         return;
       }
+      if (!ctx.agentAccess.canUse(user, conv.agentKind)) {
+        socket.close(1008, 'agent_access_denied');
+        return;
+      }
       const q = req.query as { cols?: string; rows?: string };
       const cols = Math.max(parseInt(q.cols ?? '80', 10) || 80, 2);
       const rows = Math.max(parseInt(q.rows ?? '24', 10) || 24, 2);
@@ -507,10 +523,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       // 终端 WS 不传 askLaunch:沿用现状(终端模式 hook 是聊天专属)。
       const adapter = pickAdapter(conv.agentKind);
       const launchCommand = resolveLaunchCommand(conv, project);
-      // codex 显式 discovered 兜底走 resume(同 /resume 路由的判断)。
       const hasTranscript =
-        adapter.locateTranscript(conv.sessionId, user.unixUser, project.path) !== null ||
-        conv.codexSessionDiscovered === true;
+        adapter.locateTranscript(conv.sessionId, user.unixUser, project.path) !== null;
       const command = hasTranscript
         ? adapter.buildResumeCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort })
         : adapter.buildLaunchCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort });
@@ -529,9 +543,15 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
         },
       );
 
+      ctx.conversations.markActive(cid, new Date().toISOString());
+
       safeSend(socket, encodeServerMessage({ type: 'status', alive: true }));
 
       socket.on('message', (raw: Buffer) => {
+        if (!ctx.agentAccess.canUse(user, conv.agentKind)) {
+          socket.close(1008, 'agent_access_denied');
+          return;
+        }
         const msg = decodeClientMessage(raw.toString());
         if (!msg) return;
         if (msg.type === 'input') handle.write(msg.data);

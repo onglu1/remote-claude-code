@@ -102,6 +102,27 @@ describe('ConversationStore.markActivity', () => {
   });
 });
 
+describe('ConversationStore.markActive', () => {
+  it('清掉 closedAt 并刷新 lastActivityAt', () => {
+    const dir = join(tmpdir(), `rcc-conv-active-${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'conversations.json');
+    const store = new ConversationStore(file);
+    const conv = store.create('p', '休眠会话');
+    store.update(conv.id, {
+      closedAt: '2026-06-23T00:00:00.000Z',
+      lastActivityAt: '2026-06-22T00:00:00.000Z',
+    });
+
+    const updated = store.markActive(conv.id, '2026-06-26T12:00:00.000Z');
+
+    expect(updated?.closedAt).toBeUndefined();
+    expect(updated?.lastActivityAt).toBe('2026-06-26T12:00:00.000Z');
+    expect(store.get(conv.id)?.closedAt).toBeUndefined();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
 describe('ConversationStore.listAllAlive', () => {
   it('过滤掉 deletedAt 与 closedAt', () => {
     const dir = join(tmpdir(), `rcc-conv-alive-${process.pid}-${Date.now()}`);

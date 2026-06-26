@@ -184,12 +184,12 @@ function AddProjectForm({
         </select>
       </div>
       <div className="field">
-        <label>启动命令</label>
+        <label>Claude 默认启动命令</label>
         <input
           className="input"
           value={launchCommand}
           onChange={(e) => setLaunchCommand(e.target.value)}
-          placeholder="claude"
+          placeholder="Fable-yolo / claude"
           autoCapitalize="none"
           autoCorrect="off"
         />

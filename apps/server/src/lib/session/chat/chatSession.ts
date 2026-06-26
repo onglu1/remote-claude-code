@@ -67,8 +67,7 @@ export interface ChatSpec {
   onSessionIdResolved?: (sessionId: string) => void;
   /**
    * codex 专属:sessionId 是否已是真实(用户显式传入续接的 UUID,或首次启动后扫到回写过)。
-   * true 时 ensure 跳过 discoverAndPersistSessionId(不必再扫文件);
-   * 也用于让 hasTranscript 兜底信任 codex UUID(即使本地文件还没出现,也走 resume 命令)。
+   * 仅作元数据保留;是否 resume 必须由 adapter.locateTranscript 在当前 cwd 下定位成功决定。
    */
   codexSessionDiscovered?: boolean;
 }
@@ -210,6 +209,7 @@ export class ChatSession {
             effort: this.spec.effort,
             askLaunch: this.deps.askLaunch,
           });
+      const launchedAt = Date.now();
       await this.deps.tmux.newDetached(
         this.spec.tmuxName,
         this.spec.cwd,
@@ -220,12 +220,12 @@ export class ChatSession {
 
       // codex 不能预指定 UUID（presetSessionId=false）：首次启动后异步扫真实 UUID 并回写。
       // claude（presetSessionId=true）跳过——它的 UUID 启动时已经 --session-id 传死。
-      // codexSessionDiscovered=true（用户显式传入续接的真实 UUID）也跳过——值已经是真,不必再扫。
-      if (!this.deps.adapter.capabilities.presetSessionId && !this.spec.codexSessionDiscovered) {
+      // 只有本次确实走首次启动路径时才发现;已有当前 cwd 的 transcript 时走 resume,不用再扫。
+      if (!this.deps.adapter.capabilities.presetSessionId && !hasTranscript) {
         // .catch 防静默:onSessionIdResolved 会触发路由层落盘 I/O(Task 11),将来若抛
         // 而无人 await,会变成 unhandled rejection 且"sessionId 未回写→tail 永远指占位
         // →聊天历史空白"无任何日志。这里至少留 stderr 一行排障线索。
-        void this.discoverAndPersistSessionId().catch((e) => {
+        void this.discoverAndPersistSessionId(launchedAt).catch((e) => {
           // eslint-disable-next-line no-console
           console.warn('[chatSession] discoverAndPersistSessionId 失败:', e instanceof Error ? e.message : e);
         });
@@ -254,8 +254,7 @@ export class ChatSession {
    * 扫到且与占位不同 → 回调路由层落盘 + 调 tail.setSessionId 让 tail 切到真实文件。
    * claude 路径永不进这里(ensure 仅在 !presetSessionId 时调)。
    */
-  private async discoverAndPersistSessionId(): Promise<void> {
-    const startedAt = Date.now();
+  private async discoverAndPersistSessionId(startedAt: number): Promise<void> {
     // codex 的 rollout jsonl 是懒创建的:启动进主界面不写,要等用户提交首条消息触发 turn
     // 才写 ~/.codex/sessions/YYYY/MM/DD/rollout-*-<uuid>.jsonl。所以这里要"长耐心":
     // 5min 覆盖大多数用户启动后到发首条消息的窗口。超时则放弃(用户可能从未发消息就关了页面),

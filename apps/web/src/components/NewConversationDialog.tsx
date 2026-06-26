@@ -128,8 +128,8 @@ export function NewConversationDialog({ project, onCreate, onCancel }: Props) {
           />
           <p className="nc-hint">
             {agentKind === 'codex'
-              ? '填入 codex 真实 session UUID(可从 ~/.codex/sessions/ 或 /status 取),首次启动即以 codex resume --yolo 接续。'
-              : '填入 claude session UUID,首次启动以 --resume 接续那段对话。留空 = 新建。'}
+              ? '填入 Codex 真实 session UUID(可从 ~/.codex/sessions/ 或 /status 取),首次启动即以 codex resume --yolo 接续。'
+              : '填入 Claude session UUID,首次启动以 --resume 接续那段对话。留空 = 新建。'}
             {!sidValid && <span className="nc-error">  · 格式应为标准 UUID(8-4-4-4-12 hex)</span>}
           </p>
         </div>

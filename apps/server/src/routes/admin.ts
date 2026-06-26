@@ -2,6 +2,7 @@ import argon2 from 'argon2';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context';
+import { AgentAccessConfigSchema } from '@rcc/shared';
 import {
   makeRequireAuth,
   makeRequireAdminRole,
@@ -32,6 +33,28 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: AppContext)
 
   app.get('/api/admin/users', guard, async () => {
     return { users: ctx.users.load().map(toAuthUserFromPrimary) };
+  });
+
+  // ---- Agent 使用白名单(仅 admin) ----
+  // enabled=false 表示不限制;enabled=true 时只允许 allowedPrincipalIds 内的主账号/子用户 id 使用。
+  app.get('/api/admin/agent-access', guard, async () => {
+    return { access: ctx.agentAccess.load() };
+  });
+
+  app.put('/api/admin/agent-access', guard, async (req, reply) => {
+    const parse = AgentAccessConfigSchema.safeParse(req.body);
+    if (!parse.success) return reply.code(400).send({ error: parse.error.message });
+    const known = new Set<string>([
+      ...ctx.users.load().map((u) => u.id),
+      ...ctx.subUsers.load().map((s) => s.id),
+    ]);
+    for (const id of [
+      ...parse.data.claude.allowedPrincipalIds,
+      ...parse.data.codex.allowedPrincipalIds,
+    ]) {
+      if (!known.has(id)) return reply.code(400).send({ error: `unknown_principal:${id}` });
+    }
+    return { access: ctx.agentAccess.save(parse.data) };
   });
 
   app.post('/api/admin/users', guard, async (req, reply) => {

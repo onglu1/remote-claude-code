@@ -84,10 +84,12 @@ function startUpload(
 export function Composer({
   projectId,
   convId,
+  agentLabel,
   onSend,
 }: {
   projectId: string;
   convId: string;
+  agentLabel: string;
   /** text 可空(只发图);attachments 是已上传完毕的图片(path 服务端绝对路径,name 原文件名,只用作 alt)。 */
   onSend: (text: string, attachments: { path: string; name: string }[]) => void;
 }) {
@@ -332,7 +334,7 @@ export function Composer({
           className="composer-input"
           rows={1}
           value={text}
-          placeholder="给 Claude Code 发消息…（/命令、@文件、Ctrl+V 粘图、可拖图）"
+          placeholder={`给 ${agentLabel} 发消息…（/命令、@文件、Ctrl+V 粘图、可拖图）`}
           onChange={(e) => {
             setText(e.target.value);
             grow();

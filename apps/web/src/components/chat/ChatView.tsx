@@ -160,6 +160,9 @@ export function ChatView({
   // codex 会话这些横切能力(用量 HUD、effort、rewind、AskUserQuestion hook)不适用,故隐藏;
   // Composer / KeyBar / 消息列表 / SlashPalette 为通用能力,对 codex 仍保留。
   const isClaude = conversation.agentKind === 'claude';
+  const agentLabel = isClaude ? 'Claude Code' : 'Codex';
+  const assistantLabel = isClaude ? 'Claude' : 'Codex';
+  const resumeLabel = isClaude ? '--resume' : 'codex resume';
 
   // 实时缓冲的工具配对(展开的历史回合各自配对,见 ChatHistory)。
   const toolResults = useMemo(() => collectToolResults(live), [live]);
@@ -264,14 +267,14 @@ export function ChatView({
         <button
           className="btn ghost sm"
           disabled={reflowBusy}
-          title="重排(杀 tmux+claude --resume;按 detached 默认 120×40 重起;⚠️ 会中断当前 AI 任务)"
+          title={`重排(杀 tmux+${assistantLabel} resume;按 detached 默认 120×40 重起;⚠️ 会中断当前 ${agentLabel} 任务)`}
           onClick={async () => {
             if (reflowBusy) return;
             const ok = window.confirm(
-              '重排会中断当前 AI 会话:\n' +
-                '· 正在执行的工具调用 / 生成 / AskUserQuestion 全部丢失\n' +
+              `重排会中断当前 ${agentLabel} 会话:\n` +
+                '· 正在执行的工具调用 / 生成 / 待答选择全部丢失\n' +
                 '· 旧 scrollback 一起清空,但对话历史保留在 transcript 文件里\n' +
-                '· 新 pane 启动后会 --resume 接续对话\n\n' +
+                `· 新 pane 启动后会用 ${resumeLabel} 接续对话\n\n` +
                 '确定重排吗?',
             );
             if (!ok) return;
@@ -300,14 +303,13 @@ export function ChatView({
 
       <div className="chat-scroll" ref={scrollRef}>
         {history.length === 0 && turns.length === 0 && !preview && !running && (
-          <div className="empty">
-            {isClaude ? '原生 Claude Code 会话已就绪。发条消息开始吧。' : '会话已就绪。发条消息开始吧。'}
-          </div>
+          <div className="empty">{`原生 ${agentLabel} 会话已就绪。发条消息开始吧。`}</div>
         )}
         <ChatHistory
           items={history}
           expanded={expanded}
           loading={loadingTurns}
+          assistantLabel={assistantLabel}
           onExpand={handleExpand}
           askStates={askStates}
           onAnswerAsk={sendAskAnswer}
@@ -343,7 +345,7 @@ export function ChatView({
               ⏺
             </span>
             <div className="assistant-body working">
-              {isClaude ? 'Claude 正在思考' : '正在思考'}
+              {assistantLabel} 正在思考
               <span className="dots" aria-hidden>
                 <i />
                 <i />
@@ -354,7 +356,7 @@ export function ChatView({
         )}
       </div>
 
-      <Composer projectId={project.id} convId={conversation.id} onSend={sendText} />
+      <Composer projectId={project.id} convId={conversation.id} agentLabel={agentLabel} onSend={sendText} />
       <KeyBar onKey={sendKey} />
 
       {isClaude && rewindItems !== null && (

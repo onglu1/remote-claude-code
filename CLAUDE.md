@@ -47,6 +47,10 @@
 
 前端 `ChatView` 据 `agentKind` 隐藏 Hud/EffortPill/RewindPanel/LiveAskCard;sidebar `SidebarTree` 用小字母 badge(C / X)区分两种 agent 会话。
 
+### Agent 使用白名单
+
+管理员可在用户管理里分别给 **Claude Code** / **Codex** 启用使用白名单。配置落 `config/agent-access.json`(gitignore 私本):`enabled=false` 表示不限制;`enabled=true` 时只有 `allowedPrincipalIds` 里的主账号 user.id 或子用户 subUser.id 能使用对应 agent。白名单限制的是"使用 agent":新建会话、休眠恢复、重排、聊天/终端 WS、附件上传都会后端强制校验;列表/重命名/关闭/删除/垃圾箱恢复仍按原项目权限走。两个 agent 独立设置,用于订阅/API 不共享的场景。
+
 ### 会话生命周期(休眠 + 文件夹 + 标星)
 
 - **会话三态**:**alive**(tmux 在)、**sleeping**(`closedAt` 存在,tmux 已关)、**deleted**(`deletedAt` 存在,在垃圾桶)。前端 SidebarTree 的"三态点"按这个直接映射(绿/灰/红 + 星叠加)。

@@ -490,6 +490,41 @@ select.input {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+.turn-actions {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 24px;
+  margin-bottom: var(--sp-1);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.turn-copy {
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 22px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+.turn-copy:hover,
+.turn-copy:focus-visible {
+  color: var(--ink);
+  border-color: var(--line-strong);
+  outline: none;
+}
+.turn-copy.copied {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 42%, var(--line));
+}
+.turn-copy.failed {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--line));
+}
 .assistant-turn.streaming .assistant-marker {
   animation: pulse 1.1s ease-in-out infinite;
 }

@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import type { ContentBlock, AskPick } from '@rcc/shared';
+import { copyableTextFromBlocks, type ContentBlock, type AskPick } from '@rcc/shared';
 import { Markdown } from './markdown';
 import { ToolCard } from './ToolCard';
 import { AskChoiceCard, type AskState } from './AskChoiceCard';
+import { CopyButton } from './CopyButton';
 
 export type ToolResultMap = Record<string, { content: string; isError?: boolean }>;
 export type AskStateMap = Record<string, AskState>;
@@ -35,12 +36,19 @@ export function AssistantTurn({
   askStates?: AskStateMap;
   onAnswerAsk?: (toolUseId: string, picks: AskPick[]) => void;
 }) {
+  const copyText = copyableTextFromBlocks(blocks);
+
   return (
     <div className="turn assistant-turn">
       <span className="assistant-marker" aria-hidden>
         ⏺
       </span>
       <div className="assistant-body">
+        {copyText && (
+          <div className="turn-actions">
+            <CopyButton text={copyText} title="复制回复" />
+          </div>
+        )}
         {blocks.map((b, i) => {
           switch (b.type) {
             case 'text':

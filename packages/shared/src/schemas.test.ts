@@ -5,6 +5,7 @@ import {
   ConversationSchema,
   ConversationCreateSchema,
   AgentKindSchema,
+  AgentAccessConfigSchema,
   RoleSchema,
   UserSchema,
   SubUserSchema,
@@ -43,6 +44,23 @@ describe('EffortLevelSchema / Conversation.effort', () => {
       createdAt: '2026-01-01',
     });
     expect(c.effort).toBe('max');
+  });
+});
+
+describe('AgentAccessConfigSchema', () => {
+  it('缺字段时两个 agent 默认不限制', () => {
+    const cfg = AgentAccessConfigSchema.parse({});
+    expect(cfg.claude).toEqual({ enabled: false, allowedPrincipalIds: [] });
+    expect(cfg.codex).toEqual({ enabled: false, allowedPrincipalIds: [] });
+  });
+
+  it('接受分 agent 白名单', () => {
+    const cfg = AgentAccessConfigSchema.parse({
+      claude: { enabled: true, allowedPrincipalIds: ['u1', 's1'] },
+      codex: { enabled: false, allowedPrincipalIds: [] },
+    });
+    expect(cfg.claude.enabled).toBe(true);
+    expect(cfg.claude.allowedPrincipalIds).toEqual(['u1', 's1']);
   });
 });
 

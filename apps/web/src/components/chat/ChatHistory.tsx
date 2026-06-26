@@ -12,6 +12,7 @@ export function ChatHistory({
   items,
   expanded,
   loading,
+  assistantLabel,
   onExpand,
   askStates,
   onAnswerAsk,
@@ -19,6 +20,7 @@ export function ChatHistory({
   items: ChatSkeletonItem[];
   expanded: Record<string, ChatMessage[]>;
   loading: Record<string, boolean>;
+  assistantLabel: string;
   onExpand: (id: string) => void;
   askStates?: AskStateMap;
   onAnswerAsk?: (toolUseId: string, picks: AskPick[]) => void;
@@ -46,6 +48,7 @@ export function ChatHistory({
             turnId={it.turnId}
             tail={it.tail}
             loading={!!loading[it.turnId]}
+            assistantLabel={assistantLabel}
             onExpand={onExpand}
           />
         );

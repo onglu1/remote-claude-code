@@ -8,8 +8,8 @@
  * codex 不能预先指定 session UUID(issue #13242),启动后扫
  * `<HOME>/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl` 找最新一份提取。
  */
-import { existsSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type { AgentAdapter, DiscoverSessionIdOpts, LaunchOpts, ResumeOpts, ToolUseEvent, TranscriptLike } from './adapter';
 import { CodexTranscriptTail } from './codexTranscript';
 
@@ -56,6 +56,54 @@ function scanRollouts(home: string, daysWindow = 2): Array<{ file: string; uuid:
   return out;
 }
 
+function normalizeCwd(cwd: string): string {
+  return resolve(cwd);
+}
+
+function readFilePrefix(file: string, maxBytes = 64 * 1024): string {
+  const fd = openSync(file, 'r');
+  try {
+    const { size } = statSync(file);
+    const len = Math.min(size, maxBytes);
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, 0);
+    return buf.toString('utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function readRolloutCwd(file: string): string | null {
+  try {
+    const prefix = readFilePrefix(file);
+    for (const line of prefix.split('\n')) {
+      if (!line.trim()) continue;
+      let env: unknown;
+      try {
+        env = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!env || typeof env !== 'object') continue;
+      const rec = env as { type?: unknown; payload?: unknown };
+      if (rec.type !== 'session_meta' && rec.type !== 'turn_context') continue;
+      const payload = rec.payload;
+      if (!payload || typeof payload !== 'object') continue;
+      const cwd = (payload as { cwd?: unknown }).cwd;
+      if (typeof cwd === 'string' && cwd) return cwd;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function rolloutMatchesCwd(file: string, cwd: string): boolean {
+  const rolloutCwd = readRolloutCwd(file);
+  if (!rolloutCwd) return false;
+  return normalizeCwd(rolloutCwd) === normalizeCwd(cwd);
+}
+
 export function makeCodexAdapter(opts: CodexAdapterOpts): AgentAdapter {
   return {
     kind: 'codex',
@@ -75,20 +123,20 @@ export function makeCodexAdapter(opts: CodexAdapterOpts): AgentAdapter {
       return `codex resume --yolo ${o.sessionId}`;
     },
 
-    locateTranscript(sessionId: string, unixUser: string, _cwd: string): string | null {
+    locateTranscript(sessionId: string, unixUser: string, cwd: string): string | null {
       const home = opts.homeFor(unixUser);
-      const matches = scanRollouts(home, 30).filter((r) => r.uuid === sessionId.toLowerCase());
+      const matches = scanRollouts(home, 30).filter((r) => r.uuid === sessionId.toLowerCase() && rolloutMatchesCwd(r.file, cwd));
       if (matches.length === 0) return null;
       matches.sort((a, b) => b.mtimeMs - a.mtimeMs);
       return matches[0].file;
     },
 
-    makeTranscriptTail(sessionId: string, unixUser: string, _cwd: string): TranscriptLike {
+    makeTranscriptTail(sessionId: string, unixUser: string, cwd: string): TranscriptLike {
       // 闭包内每次 getPath 调用都重新算,sessionId 回写后下次 ingest 会指向新文件。
       let currentSid = sessionId;
       const tail = new CodexTranscriptTail(() => {
         const home = opts.homeFor(unixUser);
-        const matches = scanRollouts(home, 30).filter((r) => r.uuid === currentSid.toLowerCase());
+        const matches = scanRollouts(home, 30).filter((r) => r.uuid === currentSid.toLowerCase() && rolloutMatchesCwd(r.file, cwd));
         if (matches.length === 0) return null;
         matches.sort((a, b) => b.mtimeMs - a.mtimeMs);
         return matches[0].file;
@@ -108,7 +156,7 @@ export function makeCodexAdapter(opts: CodexAdapterOpts): AgentAdapter {
       const start = Date.now();
       const poll = 200;
       while (Date.now() - start < opts2.timeoutMs) {
-        const matches = scanRollouts(home, 2).filter((r) => r.mtimeMs >= opts2.startedAt);
+        const matches = scanRollouts(home, 2).filter((r) => r.mtimeMs >= opts2.startedAt && rolloutMatchesCwd(r.file, opts2.cwd));
         if (matches.length > 0) {
           matches.sort((a, b) => b.mtimeMs - a.mtimeMs);
           return matches[0].uuid;

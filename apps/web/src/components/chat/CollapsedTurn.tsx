@@ -11,11 +11,13 @@ export function CollapsedTurn({
   turnId,
   tail,
   loading,
+  assistantLabel,
   onExpand,
 }: {
   turnId: string;
   tail?: SkeletonTail;
   loading: boolean;
+  assistantLabel: string;
   onExpand: (id: string) => void;
 }) {
   if (tail) {
@@ -40,7 +42,7 @@ export function CollapsedTurn({
       <span className="assistant-marker" aria-hidden>
         ⏺
       </span>
-      <span>{loading ? '加载中…' : '展开 Claude 的回复'}</span>
+      <span>{loading ? '加载中…' : `展开 ${assistantLabel} 的回复`}</span>
     </button>
   );
 }

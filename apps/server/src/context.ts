@@ -8,6 +8,7 @@ import { UserStore } from './lib/users';
 import { SubUserStore } from './lib/subUsers';
 import { ConversationStore } from './lib/conversations';
 import { FolderStore } from './lib/folders';
+import { AgentAccessStore } from './lib/agentAccess';
 import { Tmux } from './lib/session/tmux';
 import { SessionRegistry } from './lib/session/registry';
 import { makeRealBridgeFactory } from './lib/session/ptyBridge';
@@ -31,6 +32,8 @@ export interface AppContext {
   conversations: ConversationStore;
   /** 文件夹存储:按项目+用户隔离的会话归类目录。 */
   folders: FolderStore;
+  /** Claude/Codex 使用白名单(管理员配置)。 */
+  agentAccess: AgentAccessStore;
   /**
    * @deprecated 直接拿 ServiceUser 实例。新代码用 getTmux(unixUser) 按目标 unix 取实例。
    * 保留是为了渐进迁移期间下游 routes 不爆炸。
@@ -79,6 +82,7 @@ export async function buildContext(config: Config): Promise<AppContext> {
   const conversations = new ConversationStore(config.conversationsConfigPath);
   conversations.migrate();
   const folders = new FolderStore(config.foldersConfigPath, conversations);
+  const agentAccess = new AgentAccessStore(config.agentAccessConfigPath);
 
   // 按 unix 用户的 Tmux 实例 lazy 缓存。socket 名 = config.tmuxSocket + '-' + unixUser
   // (跨用户 tmux server 各自一份,避免 socket 权限打架)。
@@ -176,11 +180,10 @@ export async function buildContext(config: Config): Promise<AppContext> {
         scrape: scrapePane,
         tail,
         adapter,
-        // codex 显式 discovered 兜底:即使本地扫不到 jsonl,也信任用户传入的真实 UUID 走 resume
-        // (与 routes/sessions.ts resume/reflow/stream 三处判断一致)。
+        // transcript 必须能由 adapter 在当前 cwd 下定位到。codexSessionDiscovered 只表示曾经
+        // 回写过真实 UUID,不能作为 resume 充分条件,否则串过一次的 UUID 会继续读别的 cwd。
         hasTranscript: () =>
-          adapter.locateTranscript(spec.sessionId, effectiveUnixUser, spec.cwd) !== null ||
-          spec.codexSessionDiscovered === true,
+          adapter.locateTranscript(spec.sessionId, effectiveUnixUser, spec.cwd) !== null,
         // claude 专属横切:按 capability 决定是否注入。codex(capabilities 全 false)
         // 一律传 undefined,等价于既有"未配 hook/sidecar"的安全路径,chatSession 自然跳过。
         // ── HUD 用量(statusLine sidecar)──
@@ -239,6 +242,7 @@ export async function buildContext(config: Config): Promise<AppContext> {
     subUsers,
     conversations,
     folders,
+    agentAccess,
     tmux,
     getTmux,
     // 多用户隔离 2026-06-24:终端 SessionRegistry 不再 baked-in ServiceUser 的 Tmux,

@@ -63,6 +63,9 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
       if (!conv || conv.projectId !== id || conv.deletedAt) {
         return reply.code(404).send({ error: 'conversation not found' });
       }
+      if (!ctx.agentAccess.canUse(req.user!, conv.agentKind)) {
+        return reply.code(403).send({ error: 'agent_access_denied' });
+      }
       const body = req.body;
       if (!Buffer.isBuffer(body) || body.length === 0) {
         return reply.code(400).send({ error: 'empty body' });
@@ -95,6 +98,10 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
         socket.close(1011, 'not found');
         return;
       }
+      if (!ctx.agentAccess.canUse(user, conv.agentKind)) {
+        socket.close(1008, 'agent_access_denied');
+        return;
+      }
       if (!conv.sessionId) {
         socket.close(1011, 'missing sessionId');
         return;
@@ -116,10 +123,11 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
         // agent 类型(老数据缺 → schema 回填 'claude')。
         agentKind: conv.agentKind,
         // codex 显式 discovered(用户传入续接的真实 UUID,或首次扫到回写过):
-        // 让 ChatSession.ensure 跳过 5min 扫描、hasTranscript 直接信任并走 resume。
+        // 仅作为元数据传入;是否 resume 仍由 adapter 在当前项目 cwd 下定位 transcript 决定。
         codexSessionDiscovered: conv.codexSessionDiscovered === true,
         // codex 首次启动后 ChatSession 异步扫到真实 UUID 时回写(claude 路径 presetSessionId=true,
-        // 永不触发,行为零变化):落盘 sessionId + 置 codexSessionDiscovered=true,供后端重启 resume 接续。
+        // 永不触发,行为零变化):落盘 sessionId + 置 codexSessionDiscovered=true。后续是否 resume
+        // 仍由 adapter 在当前 cwd 下定位 transcript 决定。
         onSessionIdResolved: (real: string) => {
           ctx.conversations.update(conv.id, {
             sessionId: real,
@@ -152,6 +160,7 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
         })
         .then((h) => {
           handle = h;
+          ctx.conversations.markActive(cid, new Date().toISOString());
           send({ type: 'session', sessionId: conv.sessionId, name: conv.name });
           send({ type: 'effort', level: conv.effort ?? 'max' });
         })
@@ -161,6 +170,10 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
         });
 
       socket.on('message', (raw: Buffer) => {
+        if (!ctx.agentAccess.canUse(user, conv.agentKind)) {
+          socket.close(1008, 'agent_access_denied');
+          return;
+        }
         const msg = decodeChatClient(raw.toString());
         if (!msg || !handle) return;
         switch (msg.type) {

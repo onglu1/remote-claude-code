@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -131,12 +131,10 @@ describe('POST .../conversations/:cid/close', () => {
 });
 
 describe('POST .../conversations/:cid/resume', () => {
-  it('休眠会话:清 closedAt(tmux 是否真起取决于环境;路由返回 200 即可)', async () => {
-    // 测试环境 newDetached 真要起一个 tmux server,失败返回 500;
-    // 为了不依赖环境,我们对"已活动"幂等分支做断言(下面那个 case)。
-    // 本 case 仅验证:对未 close 的会话调 resume,返回 200(幂等)。
+  it('未休眠会话:幂等 200,并刷新 lastActivityAt', async () => {
     const cookie = await login('admin', 'test-pass');
     const { projectId, convId } = await makeProjectWithConv(cookie, 'P-resume-active');
+    ctx.conversations.update(convId, { lastActivityAt: '2026-06-22T00:00:00.000Z' });
     const res = await app.inject({
       method: 'POST',
       url: `/api/projects/${projectId}/conversations/${convId}/resume`,
@@ -144,6 +142,35 @@ describe('POST .../conversations/:cid/resume', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().conversation.id).toBe(convId);
+    expect(res.json().conversation.lastActivityAt).not.toBe('2026-06-22T00:00:00.000Z');
+  });
+
+  it('休眠会话:重启成功后清 closedAt 并刷新 lastActivityAt', async () => {
+    const cookie = await login('admin', 'test-pass');
+    const { projectId, convId } = await makeProjectWithConv(cookie, 'P-resume-sleeping');
+    ctx.conversations.update(convId, {
+      closedAt: '2026-06-23T00:00:00.000Z',
+      lastActivityAt: '2026-06-22T00:00:00.000Z',
+    });
+    const originalGetTmux = ctx.getTmux;
+    const fakeTmux = {
+      newDetached: vi.fn(async () => {}),
+    };
+    ctx.getTmux = () => fakeTmux as unknown as ReturnType<AppContext['getTmux']>;
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/projects/${projectId}/conversations/${convId}/resume`,
+        cookies: { rcc_token: cookie },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(fakeTmux.newDetached).toHaveBeenCalledTimes(1);
+      expect(res.json().conversation.closedAt).toBeUndefined();
+      expect(res.json().conversation.lastActivityAt).not.toBe('2026-06-22T00:00:00.000Z');
+      expect(ctx.conversations.get(convId)?.closedAt).toBeUndefined();
+    } finally {
+      ctx.getTmux = originalGetTmux;
+    }
   });
 
   it('未登录:401', async () => {

@@ -57,6 +57,8 @@ remote-cc 支持同时跑 Claude Code 与 OpenAI Codex CLI 两种 agent。新建
 
 > **Codex 安全提醒**:`codex --yolo` 跳过 sandbox 与 approvals,与 claude 的 `--dangerously-skip-permissions` 同等级风险。仅在你信任的隔离环境里用,别对不信任的项目/输入开启。
 
+管理员可在「用户管理」里分别为 **Claude Code** / **Codex** 启用使用白名单。未启用时所有登录用户按原权限可用;启用后只有勾选的主账号或子用户能新建、恢复、重排、进入对应 agent 会话。配置存 `config/agent-access.json`(私本,不进 git),适合 Claude/Codex API 或订阅额度不共享时临时切换使用范围。
+
 ### 架构
 
 ```

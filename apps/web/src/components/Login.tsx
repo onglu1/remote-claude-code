@@ -27,7 +27,7 @@ export function Login({ onLoggedIn }: { onLoggedIn: (user: AuthUser) => void }) 
         <div style={{ marginBottom: 'var(--sp-6)' }}>
           <h1 style={{ fontSize: 34, lineHeight: 1.1 }}>remote-cc</h1>
           <p className="muted" style={{ marginTop: 8 }}>
-            服务器上 Claude Code 的远程窗口
+            服务器上 Claude Code / Codex 的远程窗口
           </p>
         </div>
         <div className="field">

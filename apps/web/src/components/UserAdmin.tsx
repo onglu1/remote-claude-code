@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AuthUser, Role, SubUser } from '@rcc/shared';
+import type { AgentAccessConfig, AgentKind, AuthUser, Role, SubUser } from '@rcc/shared';
 import { api } from '../lib/api';
 
 type SubUserView = Omit<SubUser, 'passwordHash'>;
@@ -15,6 +15,7 @@ export function UserAdmin({ me, onBack }: { me: AuthUser; onBack: () => void }) 
   const [adding, setAdding] = useState(false);
   const [pwFor, setPwFor] = useState<AuthUser | null>(null);
   const [unixFor, setUnixFor] = useState<AuthUser | null>(null);
+  const [agentAccess, setAgentAccess] = useState<AgentAccessConfig | null>(null);
   /** 展开了哪个主账号的子用户面板。 */
   const [openSubs, setOpenSubs] = useState<string | null>(null);
 
@@ -22,6 +23,7 @@ export function UserAdmin({ me, onBack }: { me: AuthUser; onBack: () => void }) 
     Promise.all([
       api.adminListUsers().then((r) => setUsers(r.users)),
       api.adminListSubUsers().then((r) => setSubs(r.subusers)).catch(() => setSubs([])),
+      api.adminGetAgentAccess().then((r) => setAgentAccess(r.access)),
     ]).catch((e) => setError((e as Error).message));
   useEffect(() => {
     load();
@@ -110,6 +112,16 @@ export function UserAdmin({ me, onBack }: { me: AuthUser; onBack: () => void }) 
           })}
         </div>
 
+        {agentAccess && (
+          <AgentAccessPanel
+            users={users}
+            subs={subs}
+            access={agentAccess}
+            onSaved={(next) => setAgentAccess(next)}
+            onError={setError}
+          />
+        )}
+
         {pwFor && (
           <PasswordForm
             user={pwFor}
@@ -152,6 +164,149 @@ export function UserAdmin({ me, onBack }: { me: AuthUser; onBack: () => void }) 
           )
         )}
       </div>
+    </div>
+  );
+}
+
+function AgentAccessPanel({
+  users,
+  subs,
+  access,
+  onSaved,
+  onError,
+}: {
+  users: AuthUser[];
+  subs: SubUserView[];
+  access: AgentAccessConfig;
+  onSaved: (next: AgentAccessConfig) => void;
+  onError: (msg: string) => void;
+}) {
+  const [draft, setDraft] = useState<AgentAccessConfig>(access);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setDraft(access);
+  }, [access]);
+
+  const principals = [
+    ...users.map((u) => ({
+      id: u.id,
+      label: u.username,
+      sub: `主账号 · ${u.role === 'admin' ? '管理员' : '普通用户'} · unix:${u.unixUser ?? '?'}`,
+    })),
+    ...subs.map((s) => {
+      const parent = users.find((u) => u.id === s.parentId);
+      return {
+        id: s.id,
+        label: s.displayName || s.username,
+        sub: `子用户 · login:${s.username} · 父:${parent?.username ?? s.parentId}`,
+      };
+    }),
+  ];
+
+  const setEnabled = (agent: AgentKind, enabled: boolean) => {
+    setDraft((prev) => ({ ...prev, [agent]: { ...prev[agent], enabled } }));
+  };
+
+  const togglePrincipal = (agent: AgentKind, id: string) => {
+    setDraft((prev) => {
+      const rule = prev[agent];
+      const s = new Set(rule.allowedPrincipalIds);
+      if (s.has(id)) s.delete(id);
+      else s.add(id);
+      return { ...prev, [agent]: { ...rule, allowedPrincipalIds: [...s] } };
+    });
+  };
+
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    onError('');
+    try {
+      const r = await api.adminSetAgentAccess(draft);
+      onSaved(r.access);
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={panelStyle}>
+      <h3 style={{ fontSize: 17, marginBottom: 'var(--sp-2)' }}>Agent 白名单</h3>
+      <div className="sub" style={{ marginBottom: 'var(--sp-4)' }}>
+        关闭白名单=所有登录用户可用;启用后只有勾选的主账号或子用户可用。Claude Code 与 Codex 分开设置。
+      </div>
+      <AgentRuleEditor
+        agent="claude"
+        title="Claude Code"
+        rule={draft.claude}
+        principals={principals}
+        onEnabled={(v) => setEnabled('claude', v)}
+        onToggle={(id) => togglePrincipal('claude', id)}
+      />
+      <AgentRuleEditor
+        agent="codex"
+        title="Codex"
+        rule={draft.codex}
+        principals={principals}
+        onEnabled={(v) => setEnabled('codex', v)}
+        onToggle={(id) => togglePrincipal('codex', id)}
+      />
+      <button className="btn primary block" style={{ marginTop: 'var(--sp-4)' }} onClick={save} disabled={busy}>
+        {busy ? '保存中…' : '保存 Agent 白名单'}
+      </button>
+    </div>
+  );
+}
+
+function AgentRuleEditor({
+  title,
+  rule,
+  principals,
+  onEnabled,
+  onToggle,
+}: {
+  agent: AgentKind;
+  title: string;
+  rule: AgentAccessConfig[AgentKind];
+  principals: { id: string; label: string; sub: string }[];
+  onEnabled: (enabled: boolean) => void;
+  onToggle: (id: string) => void;
+}) {
+  return (
+    <div style={{ marginTop: 'var(--sp-4)' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+        <input
+          type="checkbox"
+          checked={rule.enabled}
+          onChange={(e) => onEnabled(e.target.checked)}
+        />
+        <strong>{title} 启用白名单</strong>
+      </label>
+      <div className="sub" style={{ marginTop: 'var(--sp-1)' }}>
+        {rule.enabled
+          ? `当前允许 ${rule.allowedPrincipalIds.length} 个主体;不勾选任何主体时无人可用。`
+          : '当前不限制。'}
+      </div>
+      {rule.enabled && (
+        <div className="list" style={{ marginTop: 'var(--sp-2)' }}>
+          {principals.map((p) => (
+            <label key={`${title}-${p.id}`} className="row" style={{ cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={rule.allowedPrincipalIds.includes(p.id)}
+                onChange={() => onToggle(p.id)}
+              />
+              <div className="grow" style={{ marginLeft: 'var(--sp-2)' }}>
+                <div className="name">{p.label}</div>
+                <div className="sub">{p.sub}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

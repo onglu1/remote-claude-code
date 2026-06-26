@@ -12,6 +12,7 @@ import type {
   Folder,
   SubUser,
   AgentKind,
+  AgentAccessConfig,
 } from '@rcc/shared';
 
 export interface FileContent {
@@ -95,6 +96,12 @@ export const api = {
     }),
   adminDeleteSubUser: (id: string) =>
     req<{ ok: true }>('DELETE', `/api/admin/subusers/${id}`),
+
+  // ---- Agent 使用白名单(仅管理员可成功调用) ----
+  adminGetAgentAccess: () =>
+    req<{ access: AgentAccessConfig }>('GET', '/api/admin/agent-access'),
+  adminSetAgentAccess: (access: AgentAccessConfig) =>
+    req<{ access: AgentAccessConfig }>('PUT', '/api/admin/agent-access', access),
 
   // ---- 项目跨 namespace 管理(管理员降级 2026-06-25) ----
   // 普通 listProjects/deleteProject 现在只针对自己 namespace;
