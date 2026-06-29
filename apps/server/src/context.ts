@@ -9,6 +9,8 @@ import { SubUserStore } from './lib/subUsers';
 import { ConversationStore } from './lib/conversations';
 import { FolderStore } from './lib/folders';
 import { AgentAccessStore } from './lib/agentAccess';
+import { SessionIndex } from './lib/sessionIndex';
+import { makeResolveUnixUser } from './lib/resolveUnixUser';
 import { Tmux } from './lib/session/tmux';
 import { SessionRegistry } from './lib/session/registry';
 import { makeRealBridgeFactory } from './lib/session/ptyBridge';
@@ -34,6 +36,8 @@ export interface AppContext {
   folders: FolderStore;
   /** Claude/Codex 使用白名单(管理员配置)。 */
   agentAccess: AgentAccessStore;
+  /** 跨会话索引层(SQLite)。给搜索/摘要/迁移/用量当统一中间层。 */
+  sessionIndex: SessionIndex;
   /**
    * @deprecated 直接拿 ServiceUser 实例。新代码用 getTmux(unixUser) 按目标 unix 取实例。
    * 保留是为了渐进迁移期间下游 routes 不爆炸。
@@ -164,6 +168,47 @@ export async function buildContext(config: Config): Promise<AppContext> {
     homeFor: (u: string) => (u === config.serviceUser ? os.homedir() : `/home/${u}`),
   });
 
+  // SessionIndex:跨会话索引 + 全文搜索。注入 conversations/projects/adapters,
+  // 启动时 sweep 所有已登记会话;chatSession 跑期间 inline 推送新消息;每 60s mtime 校对兜底。
+  // 不索引"孤儿"transcript(MVP) — namespaceId 100% 由 Project.ownerId 决定。
+  const resolveUnixUserForIndex = makeResolveUnixUser(users, subUsers, config.serviceUser);
+  const sessionIndex = new SessionIndex({
+    dbPath: config.sessionIndexDbPath,
+    conversations: {
+      listAll: () =>
+        conversations.listAll().map((c) => ({
+          id: c.id,
+          projectId: c.projectId,
+          name: c.name,
+          sessionId: c.sessionId,
+          agentKind: c.agentKind,
+          starred: c.starred,
+          createdAt: c.createdAt,
+          lastActivityAt: c.lastActivityAt,
+          closedAt: c.closedAt,
+          deletedAt: c.deletedAt,
+          folderId: c.folderId ?? null,
+        })),
+    },
+    projects: {
+      get: (id) => {
+        const p = projects.get(id);
+        return p ? { id: p.id, ownerId: p.ownerId, path: p.path } : undefined;
+      },
+    },
+    adapterFor: (kind) => (kind === 'codex' ? codexAdapter : claudeAdapter),
+    resolveUnixUser: resolveUnixUserForIndex,
+    readText: (p) => readFileSync(p, 'utf8'),
+    statFile: (p) => {
+      try {
+        const s = statSync(p);
+        return { mtimeMs: s.mtimeMs, size: s.size };
+      } catch {
+        return null;
+      }
+    },
+  });
+
   const chatRegistry = new ChatRegistry((spec, events) => {
     // 多用户:每个 spec 带 unixUser(老 spec 缺则回退 ServiceUser,过渡兼容)。
     const effectiveUnixUser = spec.unixUser ?? config.serviceUser;
@@ -214,6 +259,8 @@ export async function buildContext(config: Config): Promise<AppContext> {
               },
             }
           : {}),
+        // ── SessionIndex 钩子:每条新主线消息 inline 推送到索引 db ──
+        sessionIndex: { onMessage: (k, m) => sessionIndex.onMessage(k, m) },
       },
       events,
     );
@@ -243,6 +290,7 @@ export async function buildContext(config: Config): Promise<AppContext> {
     conversations,
     folders,
     agentAccess,
+    sessionIndex,
     tmux,
     getTmux,
     // 多用户隔离 2026-06-24:终端 SessionRegistry 不再 baked-in ServiceUser 的 Tmux,

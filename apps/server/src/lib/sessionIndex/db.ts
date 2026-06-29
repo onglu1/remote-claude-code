@@ -17,6 +17,7 @@ import { createRequire } from 'node:module';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
+import { expandCjk } from './cjkTokenize';
 
 const nodeRequire = createRequire(import.meta.url);
 const { DatabaseSync } = nodeRequire('node:sqlite') as {
@@ -79,19 +80,22 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      tokenize = 'unicode61 remove_diacritics 2'
    )`,
 
+  // 触发器里 content 走 expand_cjk(注册的 SQLite user function),把中文每字加空格,
+  // 让 unicode61 当西文 token 处理;查询时也对 query expandCjk + phrase 包裹保证连续匹配。
+  // 'delete' 路径同样走 expand_cjk(否则旧索引词无法定位删除)。
   `CREATE TRIGGER IF NOT EXISTS message_ai AFTER INSERT ON message BEGIN
      INSERT INTO message_fts(rowid, content, session_key)
-     VALUES (new.rowid, new.content, new.session_key);
+     VALUES (new.rowid, expand_cjk(new.content), new.session_key);
    END`,
   `CREATE TRIGGER IF NOT EXISTS message_ad AFTER DELETE ON message BEGIN
      INSERT INTO message_fts(message_fts, rowid, content, session_key)
-     VALUES ('delete', old.rowid, old.content, old.session_key);
+     VALUES ('delete', old.rowid, expand_cjk(old.content), old.session_key);
    END`,
   `CREATE TRIGGER IF NOT EXISTS message_au AFTER UPDATE ON message BEGIN
      INSERT INTO message_fts(message_fts, rowid, content, session_key)
-     VALUES ('delete', old.rowid, old.content, old.session_key);
+     VALUES ('delete', old.rowid, expand_cjk(old.content), old.session_key);
      INSERT INTO message_fts(rowid, content, session_key)
-     VALUES (new.rowid, new.content, new.session_key);
+     VALUES (new.rowid, expand_cjk(new.content), new.session_key);
    END`,
 
   // 摘要表:本期建表不写,留给 ②(AI 摘要)
@@ -114,6 +118,9 @@ export function openSessionIndexDb(dbPath: string): Db {
   // WAL 提高并发读性能;主进程是唯一 writer
   if (dbPath !== ':memory:') db.exec(`PRAGMA journal_mode = WAL`);
   db.exec(`PRAGMA foreign_keys = ON`);
+  // 注册 expand_cjk:触发器里调,把 message.content 写入 FTS5 前把中文每字加空格,
+  // 让 unicode61 当西文 token 处理(unicode61 默认丢弃 CJK 字符)。
+  db.function('expand_cjk', (s: unknown) => (typeof s === 'string' ? expandCjk(s) : ''));
   for (const stmt of SCHEMA_STATEMENTS) db.exec(stmt);
   db.prepare(
     `INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,

@@ -66,7 +66,7 @@ describe('openSessionIndexDb', () => {
     }
   });
 
-  it('FTS5 触发器:INSERT message 自动同步到 message_fts,查得到', () => {
+  it('FTS5 触发器:INSERT message 自动同步到 message_fts(中文兼容)', () => {
     const dir = tmpDir();
     const db = openSessionIndexDb(join(dir, 'sessionIndex.db'));
     try {
@@ -75,12 +75,18 @@ describe('openSessionIndexDb', () => {
          VALUES ('k','c','p','ns','u','claude','sid','n',0,'2026-06-29T00:00:00Z',0,0)`,
       ).run();
       db.prepare(
-        `INSERT INTO message (session_key, msg_index, role, ts, content) VALUES ('k', 0, 'user', '2026-06-29T00:00:01Z', '帮我修一个 字体 问题')`,
+        `INSERT INTO message (session_key, msg_index, role, ts, content) VALUES ('k', 0, 'user', '2026-06-29T00:00:01Z', '帮我修一个字体问题')`,
       ).run();
+      // FTS5 用 expand_cjk 把中文每字加空格存进去;搜索时 query 也走 phrase 包裹
       const rows = db
         .prepare("SELECT session_key FROM message_fts WHERE message_fts MATCH ?")
-        .all('字体') as Array<{ session_key: string }>;
+        .all('"字 体"') as Array<{ session_key: string }>;
       expect(rows.map((r) => r.session_key)).toEqual(['k']);
+      // 单字也能命中
+      const rows2 = db
+        .prepare("SELECT session_key FROM message_fts WHERE message_fts MATCH ?")
+        .all('"字"') as Array<{ session_key: string }>;
+      expect(rows2.map((r) => r.session_key)).toEqual(['k']);
     } finally {
       db.close();
       rmSync(dir, { recursive: true, force: true });

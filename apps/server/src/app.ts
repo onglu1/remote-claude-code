@@ -1,13 +1,15 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
-import { execSync } from 'node:child_process';
+import httpProxy from '@fastify/http-proxy';
+import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { statSync, openSync, readSync, closeSync, fstatSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
 import type { Config } from './config';
 import { buildContext, type AppContext } from './context';
 import security from './plugins/security';
+import { makeRequireAuth } from './plugins/requireAuth';
 import { registerStaticSite } from './plugins/staticSite';
 import { registerAuthRoutes } from './routes/auth';
 import { registerAdminRoutes } from './routes/admin';
@@ -21,9 +23,12 @@ import { registerFolderRoutes } from './routes/folders';
 import { registerChatRoutes } from './routes/chat';
 import { registerMetricsRoutes } from './routes/metrics';
 import { registerMeRoutes } from './routes/me';
+import { registerVscodeRoutes } from './routes/vscode';
 import { IdleSweeper } from './lib/session/idleSweeper';
 import { createActivityState, tickActivity, type ActivityIO, type ActivityState } from './lib/session/activity';
 import { locateTranscript, projectsDirFor } from './lib/session/chat/transcript';
+import { conversationRuntimeKey } from './lib/conversationIdentity';
+import { makeResolveUnixUser } from './lib/resolveUnixUser';
 
 export interface BuildAppOptions {
   /** 测试时可注入已构建好的 context（跳过 argon2 等）。 */
@@ -34,6 +39,7 @@ export interface BuildAppOptions {
 export async function buildApp(config: Config, opts: BuildAppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const ctx = opts.context ?? (await buildContext(config));
+  let vscodeProc: ChildProcess | null = null;
 
   await app.register(cookie);
   await app.register(security, { trustCloudflare: config.trustCloudflare });
@@ -53,6 +59,41 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
   await registerChatRoutes(app, ctx);
   await registerMetricsRoutes(app, ctx);
   await registerMeRoutes(app, ctx);
+  await registerVscodeRoutes(app, ctx);
+
+  if (config.vscodeProxyTarget.trim()) {
+    await app.register(httpProxy, {
+      upstream: config.vscodeProxyTarget,
+      prefix: config.vscodeProxyPrefix,
+      rewritePrefix: '/',
+      websocket: true,
+      preHandler: makeRequireAuth(ctx.config.sessionSecret, ctx.users, ctx.subUsers),
+      replyOptions: {
+        rewriteHeaders(headers) {
+          const next = { ...headers };
+          delete next['x-frame-options'];
+          delete next['content-security-policy'];
+          return next;
+        },
+      },
+    });
+  }
+
+  if (config.vscodeCommand.trim()) {
+    vscodeProc = spawn(config.vscodeCommand, {
+      cwd: config.repoRoot,
+      shell: true,
+      stdio: ['ignore', 'inherit', 'inherit'],
+      env: process.env,
+      detached: false,
+    });
+    vscodeProc.on('exit', (code, signal) => {
+      if (code !== 0 && signal !== 'SIGTERM') {
+        console.error(`[remote-cc] VSCode Web 进程退出: code=${code} signal=${signal ?? ''}`);
+      }
+      vscodeProc = null;
+    });
+  }
 
   // ---- IdleSweeper:每 60s 扫一次非休眠会话,超阈值就杀 tmux + 写 closedAt + 清 chatRegistry。
   // 活动探测器五信号:transcript jsonl 增量 tool_use、ask sidecar、transcript mtime、
@@ -94,17 +135,8 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
 
   // 多用户隔离:按 ownerId(可能是 user.id 或 subUser.id) 查到对应 unixUser。
   // 用于 sweeper / measureIdle 决定:tmux 在哪个 socket 杀、transcript 在哪个家找。
-  function resolveUnixUser(ownerId?: string): string {
-    if (!ownerId) return ctx.config.serviceUser;
-    const u = ctx.users.get(ownerId);
-    if (u?.unixUser) return u.unixUser;
-    const s = ctx.subUsers.get(ownerId);
-    if (s) {
-      const parent = ctx.users.get(s.parentId);
-      if (parent?.unixUser) return parent.unixUser;
-    }
-    return ctx.config.serviceUser;
-  }
+  // 抽到 lib/resolveUnixUser 给 SessionIndex 也复用,避免双实现漂移。
+  const resolveUnixUser = makeResolveUnixUser(ctx.users, ctx.subUsers, ctx.config.serviceUser);
 
   const sweeper = new IdleSweeper(
     {
@@ -121,7 +153,7 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
             ownerId: owners.get(c.projectId),
           }));
         },
-        update: (id, patch) => ctx.conversations.update(id, patch),
+        update: (projectId, id, patch) => ctx.conversations.updateInProject(projectId, id, patch),
       },
       users: {
         getSettings: (uid) => ctx.users.get(uid)?.settings ?? { idleCloseHours: 3 },
@@ -135,14 +167,15 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
         },
       },
       registry: {
-        isActive: (id) => ctx.chatRegistry.isActive(id),
-        forceClose: (id) => ctx.chatRegistry.forceClose(id),
+        isActive: (projectId, id) => ctx.chatRegistry.isActive(conversationRuntimeKey(projectId, id)),
+        forceClose: (projectId, id) => ctx.chatRegistry.forceClose(conversationRuntimeKey(projectId, id)),
       },
       measureIdle: (c) => {
-        let state = activityStates.get(c.id);
+        const key = conversationRuntimeKey(c.projectId, c.id);
+        let state = activityStates.get(key);
         if (!state) {
           state = createActivityState(Date.now());
-          activityStates.set(c.id, state);
+          activityStates.set(key, state);
         }
         // 多用户隔离:transcript / sidecar 路径按 conversation owner 的 unixUser 解析。
         const unixUser = resolveUnixUser(c.ownerId);
@@ -164,10 +197,10 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
         // busy 时顺便维护 lastActivityAt(供前端列表"最近活跃"排序);
         // 节流 60s 防过度写盘。fire-and-forget,失败不影响 sweep。
         if (r.busy) {
-          const lastWrote = lastActivityWriteTimes.get(c.id) ?? 0;
+          const lastWrote = lastActivityWriteTimes.get(key) ?? 0;
           if (Date.now() - lastWrote > 60_000) {
-            ctx.conversations.markActivity(c.id, new Date(Date.now()).toISOString());
-            lastActivityWriteTimes.set(c.id, Date.now());
+            ctx.conversations.markActivityInProject(c.projectId, c.id, new Date(Date.now()).toISOString());
+            lastActivityWriteTimes.set(key, Date.now());
           }
         }
         return r;
@@ -177,8 +210,17 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
     { intervalMs: 60_000, defaultThresholdHours: 3 },
   );
 
+  // SessionIndex 启动顺序:在 sweeper 前先 start(startupSweep 同步扫一遍所有已登记会话)。
+  // 60s 自有 timer + 主进程唯一 writer,与 IdleSweeper 节奏相同但独立 ref。
+  ctx.sessionIndex.start();
   sweeper.start();
-  app.addHook('onClose', async () => { sweeper.stop(); });
+  app.addHook('onClose', async () => {
+    sweeper.stop();
+    ctx.sessionIndex.close();
+    if (vscodeProc && !vscodeProc.killed) {
+      vscodeProc.kill('SIGTERM');
+    }
+  });
 
   if (opts.serveStatic ?? true) {
     await registerStaticSite(app, config.webDist);

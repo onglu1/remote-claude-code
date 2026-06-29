@@ -28,6 +28,14 @@ const EnvSchema = z.object({
   RCC_SERVICE_USER: z.string().default(''),
   /** claude 二进制路径(写进 sudoers 白名单时也用)。默认 'claude' 由 PATH 解析。 */
   RCC_CLAUDE_BINARY: z.string().default('claude'),
+  /** 可选:VSCode Web iframe URL 模板。例: http://127.0.0.1:8080/?folder={path} */
+  RCC_VSCODE_URL_TEMPLATE: z.string().default(''),
+  /** 可选:把 /vscode/* 同源反代到这个内部 VSCode Web 地址。例: http://127.0.0.1:8080 */
+  RCC_VSCODE_PROXY_TARGET: z.string().default(''),
+  /** VSCode Web 同源代理挂载路径。 */
+  RCC_VSCODE_PROXY_PREFIX: z.string().default('/vscode'),
+  /** 可选:remote-cc 启动时顺手拉起的 VSCode Web 命令。例: code-server --auth none --bind-addr 127.0.0.1:8080 */
+  RCC_VSCODE_COMMAND: z.string().default(''),
 });
 
 export type Config = {
@@ -47,6 +55,8 @@ export type Config = {
   foldersConfigPath: string;
   /** agent 使用白名单 JSON 存储路径(与 projects.json 同目录)。 */
   agentAccessConfigPath: string;
+  /** SessionIndex sqlite 文件路径(与 conversations.json 同目录)。 */
+  sessionIndexDbPath: string;
   usersConfigPath: string;
   fsBrowseRoot: string;
   /** statusLine sidecar 目录的绝对路径（聊天 HUD 独立数据源）。 */
@@ -59,6 +69,14 @@ export type Config = {
   serviceUser: string;
   /** claude 二进制(绝对路径或 PATH 可找到);跨 unix 时配合 sudoers 白名单。 */
   claudeBinary: string;
+  /** VSCode Web iframe URL 模板。支持 {path}/{pathRaw}/{id}/{name}。 */
+  vscodeUrlTemplate: string;
+  /** VSCode Web 内部反代目标。配置后 iframe 默认走同源 /vscode/。 */
+  vscodeProxyTarget: string;
+  /** VSCode Web 同源代理路径前缀。 */
+  vscodeProxyPrefix: string;
+  /** remote-cc 启动时可选拉起的 VSCode Web 命令。 */
+  vscodeCommand: string;
   /** per-unix-user 浏览根:RCC_FS_BROWSE_ROOT_<UNIXUSER> env 解析;缺省回退 ~<user>/projects。 */
   fsBrowseRootMap: Record<string, string>;
   repoRoot: string;
@@ -95,6 +113,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     conversationsConfigPath: path.join(path.dirname(projectsConfigPath), 'conversations.json'),
     foldersConfigPath: path.join(path.dirname(projectsConfigPath), 'folders.json'),
     agentAccessConfigPath: path.join(path.dirname(projectsConfigPath), 'agent-access.json'),
+    sessionIndexDbPath: path.join(path.dirname(projectsConfigPath), 'sessionIndex.db'),
     usersConfigPath: path.join(path.dirname(projectsConfigPath), 'users.json'),
     fsBrowseRoot: parsed.FS_BROWSE_ROOT,
     statuslineDir: parsed.RCC_STATUSLINE_DIR
@@ -104,6 +123,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     subUsersConfigPath: path.join(path.dirname(projectsConfigPath), 'subusers.json'),
     serviceUser: parsed.RCC_SERVICE_USER || os.userInfo().username,
     claudeBinary: parsed.RCC_CLAUDE_BINARY,
+    vscodeUrlTemplate: parsed.RCC_VSCODE_URL_TEMPLATE,
+    vscodeProxyTarget: parsed.RCC_VSCODE_PROXY_TARGET,
+    vscodeProxyPrefix: parsed.RCC_VSCODE_PROXY_PREFIX.startsWith('/')
+      ? parsed.RCC_VSCODE_PROXY_PREFIX.replace(/\/+$/, '') || '/vscode'
+      : `/${parsed.RCC_VSCODE_PROXY_PREFIX}`.replace(/\/+$/, ''),
+    vscodeCommand: parsed.RCC_VSCODE_COMMAND,
     fsBrowseRootMap,
     repoRoot,
     webDist: path.join(repoRoot, 'apps/web/dist'),

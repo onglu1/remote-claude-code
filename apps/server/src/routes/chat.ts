@@ -9,8 +9,8 @@ import type { AppContext } from '../context';
 import type { ChatHandle } from '../lib/session/chat/chatRegistry';
 import { COOKIE_NAME } from '../lib/auth';
 import { makeRequireAuth, resolveUser } from '../plugins/requireAuth';
-import { canSeeProject } from '../lib/authz';
 import { resolveLaunchCommand } from '../lib/session/chat/agent/resolveLaunchCommand';
+import { resolveSessionScope } from './sessionScope';
 
 const UPLOAD_DIR = path.join(os.tmpdir(), 'rcc-uploads');
 /** 单文件上限:手机相机直出大约 5–10MB,留 30MB 余量;超出在路由层 bodyLimit 兜底拒绝。 */
@@ -45,7 +45,7 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
   /**
    * 图片上传(HTTP):前端把整段二进制 POST 上来,后端落盘并返回路径。
    * 路径作为普通文本经 WS 发给 claude,避免「大 base64 全塞 JSON 走 WS」在手机端崩。
-   * 走会话路径校验权限(canSeeProject)防越权占盘。
+   * 走会话 scope 校验权限与项目归属,防越权占盘。
    */
   app.post<{
     Params: { id: string; cid: string };
@@ -55,14 +55,11 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
     { preHandler: requireAuth, bodyLimit: UPLOAD_MAX_BYTES },
     async (req, reply) => {
       const { id, cid } = req.params;
-      const project = ctx.projects.get(id);
-      if (!project || !canSeeProject(req.user!, project)) {
-        return reply.code(404).send({ error: 'project not found' });
-      }
-      const conv = ctx.conversations.get(cid);
-      if (!conv || conv.projectId !== id || conv.deletedAt) {
+      const scope = resolveSessionScope(ctx, req.user!, id, cid);
+      if (!scope) {
         return reply.code(404).send({ error: 'conversation not found' });
       }
+      const conv = scope.conversation;
       if (!ctx.agentAccess.canUse(req.user!, conv.agentKind)) {
         return reply.code(403).send({ error: 'agent_access_denied' });
       }
@@ -91,13 +88,13 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
         return;
       }
       const { id, cid } = req.params as { id: string; cid: string };
-      const project = ctx.projects.get(id);
-      const conv = ctx.conversations.get(cid);
-      if (!project || !conv || !canSeeProject(user, project) || conv.deletedAt) {
+      const scope = resolveSessionScope(ctx, user, id, cid);
+      if (!scope) {
         // 软删除的会话当作 not found:URL 偷进也不行,先去垃圾箱恢复。
         socket.close(1011, 'not found');
         return;
       }
+      const { project, conversation: conv } = scope;
       if (!ctx.agentAccess.canUse(user, conv.agentKind)) {
         socket.close(1008, 'agent_access_denied');
         return;
@@ -111,6 +108,9 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
       const spec = {
         tmuxName: conv.tmuxName,
         cwd: project.path,
+        // sessionIndex 推送用:chatSession 把 `${projectId}:${convId}` 当 sessionKey
+        projectId: id,
+        convId: cid,
         // 会话级 launchCommand 覆盖优先,缺省回退 agent 默认(codex 用 CODEX_DEFAULT_LAUNCH、
         // claude 用 project.launchCommand);二级回退逻辑收敛在 resolveLaunchCommand,各启动路径共用。
         launchCommand: resolveLaunchCommand(conv, project),
@@ -125,11 +125,15 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
         // codex 显式 discovered(用户传入续接的真实 UUID,或首次扫到回写过):
         // 仅作为元数据传入;是否 resume 仍由 adapter 在当前项目 cwd 下定位 transcript 决定。
         codexSessionDiscovered: conv.codexSessionDiscovered === true,
+        excludeSessionIds: ctx.conversations
+          .listAll()
+          .filter((c) => !(c.projectId === id && c.id === cid))
+          .map((c) => c.sessionId),
         // codex 首次启动后 ChatSession 异步扫到真实 UUID 时回写(claude 路径 presetSessionId=true,
         // 永不触发,行为零变化):落盘 sessionId + 置 codexSessionDiscovered=true。后续是否 resume
         // 仍由 adapter 在当前 cwd 下定位 transcript 决定。
         onSessionIdResolved: (real: string) => {
-          ctx.conversations.update(conv.id, {
+          ctx.conversations.updateInProject(id, conv.id, {
             sessionId: real,
             codexSessionDiscovered: true,
           });
@@ -138,7 +142,7 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
 
       let handle: ChatHandle | null = null;
       ctx.chatRegistry
-        .subscribe(cid, spec, {
+        .subscribe(scope.runtimeKey, spec, {
           onHistory: (snap) => send({ type: 'history', items: snap.items, live: snap.live }),
           onMessage: (message) => send({ type: 'message', message }),
           onPreview: (text) => send({ type: 'preview', text }),
@@ -160,7 +164,7 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
         })
         .then((h) => {
           handle = h;
-          ctx.conversations.markActive(cid, new Date().toISOString());
+          ctx.conversations.markActiveInProject(id, cid, new Date().toISOString());
           send({ type: 'session', sessionId: conv.sessionId, name: conv.name });
           send({ type: 'effort', level: conv.effort ?? 'max' });
         })
@@ -203,7 +207,7 @@ export async function registerChatRoutes(app: FastifyInstance, ctx: AppContext):
             void handle.refresh().catch(() => {/* 旧 tmux/会话已关:忽略 */});
             break;
           case 'set_effort':
-            ctx.conversations.update(cid, { effort: msg.level });
+            ctx.conversations.updateInProject(id, cid, { effort: msg.level });
             void handle.setEffort(msg.level);
             send({ type: 'effort', level: msg.level });
             break;

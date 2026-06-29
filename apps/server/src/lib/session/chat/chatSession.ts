@@ -53,6 +53,9 @@ export interface ChatSpec {
   effort?: EffortLevel;
   cols: number;
   rows: number;
+  /** sessionIndex 推送用的 projectId/convId;缺则不推送(纯运行时态,不影响行为)。 */
+  projectId?: string;
+  convId?: string;
   /**
    * 多用户隔离设计 2026-06-23:拉起 tmux/claude 用的 unix 用户名。
    * 可选(老 spec 不带);chatRegistry 工厂缺则回 ServiceUser(单用户兼容)。
@@ -70,6 +73,8 @@ export interface ChatSpec {
    * 仅作元数据保留;是否 resume 必须由 adapter.locateTranscript 在当前 cwd 下定位成功决定。
    */
   codexSessionDiscovered?: boolean;
+  /** codex 首次发现真实 UUID 时排除其它已登记会话,避免同 cwd 活跃旧 rollout 串台。 */
+  excludeSessionIds?: string[];
 }
 
 export interface TmuxLike {
@@ -124,6 +129,16 @@ export interface ChatSessionDeps {
   cleanAskSidecar?: (dir: string, sessionId: string) => void;
   /** 构造数字键作答驱动（默认 AskDriver）；便于测试注入 fake。 */
   makeAskDriver?: (tmuxName: string, tmux: TmuxLike) => AskDriverLike;
+  /**
+   * SessionIndex 钩子(可选):每条新主线消息推送给索引器,inline 写 sqlite。
+   * 未注入则跳过(等于 zero-overhead 旁路)。配合 spec.projectId/convId 使用。
+   */
+  sessionIndex?: {
+    onMessage: (
+      sessionKey: string,
+      msg: { sessionKey: string; msgIndex: number; role: 'user' | 'assistant'; ts: string; content: string },
+    ) => void;
+  };
 }
 
 export interface ChatSessionEvents {
@@ -183,6 +198,8 @@ export class ChatSession {
    * （用户发了新消息→分叉）即清除，恢复正常渲染。
    */
   private rewoundBeforeUuid?: string;
+  /** 已推送给 sessionIndex 的最后一条 msgIndex(基于 this.messages 数组下标);增量推送用。 */
+  private lastIndexedMsgIndex = -1;
 
   constructor(
     private readonly spec: ChatSpec,
@@ -247,6 +264,7 @@ export class ChatSession {
       }
     }
     this.messages = this.deps.tail.activeChain();
+    this.pushNewMessagesToIndex();
   }
 
   /**
@@ -261,6 +279,7 @@ export class ChatSession {
     // 下次 ensure(reflow / 浏览器重新打开)会重新启动这个轮询。
     const real = await this.deps.adapter.discoverSessionId({
       tentativeSessionId: this.spec.sessionId,
+      excludeSessionIds: this.spec.excludeSessionIds,
       unixUser: this.spec.unixUser ?? '',
       cwd: this.spec.cwd,
       timeoutMs: 300_000,
@@ -515,6 +534,48 @@ export class ChatSession {
     return this.deps.tmux.capturePaneVisible(this.spec.tmuxName);
   }
 
+  /**
+   * 把超出 lastIndexedMsgIndex 的新主线消息推送给 sessionIndex(若注入)。
+   * 只推 user/assistant 文本 + thinking 块(剥离 tool 调用),与 IndexedMessage 语义对齐。
+   * 没注入 sessionIndex 或 spec 缺 projectId/convId 时静默 noop。
+   */
+  private pushNewMessagesToIndex(): void {
+    const idx = this.deps.sessionIndex;
+    if (!idx || !this.spec.projectId || !this.spec.convId) return;
+    const sessionKey = `${this.spec.projectId}:${this.spec.convId}`;
+    const all = this.messages;
+    for (let i = this.lastIndexedMsgIndex + 1; i < all.length; i++) {
+      const m = all[i];
+      const role = m.role;
+      if (role !== 'user' && role !== 'assistant') continue;
+      const texts = m.blocks
+        .map((b) => {
+          if (b.type === 'text') return b.text;
+          if (b.type === 'thinking') return b.text;
+          return '';
+        })
+        .filter((s) => s.length > 0);
+      if (texts.length === 0) {
+        // 纯 tool_use/tool_result 消息也要 bump 指针,避免下次重扫
+        this.lastIndexedMsgIndex = i;
+        continue;
+      }
+      const content = texts.join('\n');
+      try {
+        idx.onMessage(sessionKey, {
+          sessionKey,
+          msgIndex: i,
+          role,
+          ts: m.ts ?? new Date().toISOString(),
+          content,
+        });
+      } catch {
+        /* sessionIndex 内部已 log,这里静默不打断聊天 */
+      }
+      this.lastIndexedMsgIndex = i;
+    }
+  }
+
   /** 一次轮询：先收 transcript 新消息，再读屏更新预览/运行态。 */
   async tick(): Promise<void> {
     if (this.ticking || this.rewindActive || this.askActive) return;
@@ -540,8 +601,13 @@ export class ChatSession {
         addedCount = added.length;
         this.messages = chain;
         for (const m of added) this.events.onMessage(m);
+        this.pushNewMessagesToIndex();
       } else {
+        // 链头变(rewind 分叉 / 缩短):msg_index 序列重排,inline 推送会与 db 现有
+        // 数据冲突且 message_count 会错位。MVP 不主动推,标记 lastIndexedMsgIndex 跳过
+        // 重排段(防止下次 tick 重复推老索引);60s mtime tick 触发 reindexOne 全量重建。
         this.messages = chain;
+        this.lastIndexedMsgIndex = chain.length - 1;
         this.events.onHistory(buildHistorySnapshot(chain, { running: this.running }));
       }
 
