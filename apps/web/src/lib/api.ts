@@ -24,6 +24,25 @@ export interface FileContent {
   size: number;
 }
 
+/** 跨会话搜索结果(单行);与后端 SessionSearchResult 形状一致,摘了前端需要的字段。 */
+export interface SessionSearchResult {
+  sessionKey: string;
+  convId: string;
+  projectId: string;
+  agentKind: AgentKind;
+  sessionId: string;
+  name: string;
+  folderId: string | null;
+  starred: boolean;
+  createdAt: string;
+  lastActivityAt: string | null;
+  closedAt: string | null;
+  deletedAt: string | null;
+  firstUserMessage: string | null;
+  matchSnippet: string | null;
+  rank: number;
+}
+
 class ApiError extends Error {
   constructor(
     public status: number,
@@ -214,6 +233,13 @@ export const api = {
       'GET',
       `/api/projects/${pid}/file?path=${encodeURIComponent(path)}`,
     ),
+  writeFile: (pid: string, path: string, content: string) =>
+    req<{ file: FileContent }>('PUT', `/api/projects/${pid}/file`, { path, content }),
+  getVscode: (pid: string) =>
+    req<{ enabled: false } | { enabled: true; url: string }>(
+      'GET',
+      `/api/projects/${pid}/vscode`,
+    ),
 
   getTasks: (pid: string) =>
     req<{ tasks: TaskItem[]; evidence: EvidenceItem[]; hasDocs: boolean }>(
@@ -282,6 +308,23 @@ export const api = {
   getSettings: () => req<{ idleCloseHours: number }>('GET', '/api/me/settings'),
   updateSettings: (s: { idleCloseHours: number }) =>
     req<{ idleCloseHours: number }>('PATCH', '/api/me/settings', s),
+
+  /** 跨会话/跨项目全文搜索。后端按 req.user.namespaceId 强制过滤,前端不传 namespace。 */
+  searchSessions: (params: {
+    q?: string;
+    projectId?: string;
+    source?: 'claude' | 'codex';
+    visibility?: 'default' | 'starred' | 'closed' | 'deleted';
+    limit?: number;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.projectId) qs.set('projectId', params.projectId);
+    if (params.source) qs.set('source', params.source);
+    if (params.visibility) qs.set('visibility', params.visibility);
+    if (params.limit) qs.set('limit', String(params.limit));
+    return req<{ results: SessionSearchResult[] }>('GET', `/api/sessions/search?${qs.toString()}`);
+  },
 };
 
 export { ApiError };

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Project, Conversation, Folder, AgentKind } from '@rcc/shared';
 import { api } from '../lib/api';
 import { SidebarTree } from './SidebarTree';
+import { SidebarSearch } from './SidebarSearch';
 import { MultiSelectToolbar } from './MultiSelectToolbar';
 import { NewConversationDialog } from './NewConversationDialog';
 
@@ -211,6 +212,8 @@ export function ConversationList({
 
   return (
     <div>
+      {/* 顶部跨会话搜索:空 query 时折叠;非空时展示扁平结果,点击跨项目跳转 */}
+      <SidebarSearch />
       {convs.length === 0 && (
         <div className="empty">还没有会话。新建时可选择 Claude Code 或 Codex；进入后可在聊天/终端视图间随时切换。</div>
       )}
