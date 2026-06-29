@@ -48,10 +48,12 @@ export interface TranscriptLike {
 export interface DiscoverSessionIdOpts {
   /** 创建会话时预生成的占位 UUID（主要用于派生 tmuxName 等本地用途）。 */
   tentativeSessionId: string;
+  /** 已登记给其它会话的 sessionId；发现新 codex rollout 时必须排除。 */
+  excludeSessionIds?: string[];
   unixUser: string;
   cwd: string;
   timeoutMs: number;
-  /** 启动时刻 ms 时间戳；只接受 mtime ≥ startedAt 的文件，避免抓到老 session。 */
+  /** 启动时刻 ms 时间戳；只接受本次启动后创建的文件，避免抓到老 session。 */
   startedAt: number;
 }
 
@@ -94,4 +96,14 @@ export interface AgentAdapter {
 
   /** 解析"未配对工具调用"事件（给 IdleSweeper 五信号的信号 ① 用）。codex 实现可返回空。 */
   parseToolUseEvents(text: string): ToolUseEvent[];
+
+  /**
+   * 一次性解析 transcript 全文 → 主线消息(activeChain 等价)。
+   * 索引层用,与 TranscriptTail 共享同一份解析逻辑(避免双实现漂移)。
+   * 工具调用/工具结果块不出现在结果里(只保留主线 user/assistant 文本)。
+   */
+  parseTranscriptText(
+    text: string,
+    sessionId: string,
+  ): Array<{ role: 'user' | 'assistant'; ts: string; content: string }>;
 }

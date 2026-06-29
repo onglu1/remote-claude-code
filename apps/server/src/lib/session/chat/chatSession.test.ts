@@ -36,6 +36,7 @@ function makeFakeClaudeAdapter(): AgentAdapter {
     makeTranscriptTail: () => ({ activeChain: () => [], reset: () => {/* noop */} }),
     discoverSessionId: async (o) => o.tentativeSessionId,
     parseToolUseEvents: () => [],
+    parseTranscriptText: () => [],
   };
 }
 
@@ -50,6 +51,7 @@ function makeFakeCodexAdapter(overrides: Partial<AgentAdapter> = {}): AgentAdapt
     makeTranscriptTail: () => ({ activeChain: () => [], reset: () => {/* noop */} }),
     discoverSessionId: async (o) => o.tentativeSessionId,
     parseToolUseEvents: () => [],
+    parseTranscriptText: () => [],
     ...overrides,
   };
 }

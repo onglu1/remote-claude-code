@@ -311,3 +311,60 @@ export class TranscriptTail {
     this.byUuid.clear();
   }
 }
+
+/**
+ * 一次性把整段 transcript 文本解析为「活动分支」消息(activeChain 等价)。
+ * TranscriptTail 是增量 + 树结构 + 增量 ingest;此函数是一次性 + 同一棵树,索引层用。
+ * 仅保留主线 user/assistant 文本块(tool_use/tool_result 跳过,因为索引层只搜正文)。
+ */
+export function parseClaudeChain(
+  text: string,
+): Array<{ role: 'user' | 'assistant'; ts: string; content: string }> {
+  // 复用 parseEntry 建树(与 TranscriptTail.ingest 内部逻辑一致)
+  const order: string[] = [];
+  const byUuid = new Map<string, TranscriptEntry>();
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    const e = parseEntry(line);
+    if (!e) continue;
+    if (!byUuid.has(e.uuid)) order.push(e.uuid);
+    byUuid.set(e.uuid, e);
+  }
+  // 从最后一个非 sidechain 节点回溯到根(与 TranscriptTail.activeChain 一致)
+  let cur: string | null = null;
+  for (let i = order.length - 1; i >= 0; i--) {
+    const e = byUuid.get(order[i]);
+    if (e && !e.isSidechain) {
+      cur = e.uuid;
+      break;
+    }
+  }
+  const out: Array<{ role: 'user' | 'assistant'; ts: string; content: string }> = [];
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const e = byUuid.get(cur);
+    if (!e) break;
+    if (!e.isSidechain && e.msg) {
+      // 主线消息仅取 text/thinking 文本块(剥离 tool_use / tool_result / image);
+      // tool_result 进的也是 role:user 但 blocks 里只有 tool_result → textBlocks 空 → 跳过。
+      const texts = e.msg.blocks
+        .map((b) => {
+          if (b.type === 'text') return b.text;
+          if (b.type === 'thinking') return b.text;
+          return '';
+        })
+        .filter((s) => s.length > 0);
+      const role = e.msg.role;
+      if (texts.length > 0 && (role === 'user' || role === 'assistant')) {
+        out.push({
+          role,
+          ts: e.msg.ts ?? '',
+          content: texts.join('\n'),
+        });
+      }
+    }
+    cur = e.parentUuid;
+  }
+  return out.reverse();
+}

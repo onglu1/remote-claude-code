@@ -207,3 +207,37 @@ export class CodexTranscriptTail implements TranscriptLike {
     this.skippedLines = 0;
   }
 }
+
+/**
+ * 一次性把整段 codex rollout 文本解析为主线 user/assistant 文本(activeChain 等价)。
+ * 与 CodexTranscriptTail 共享同一份"response_item.message 抽 text"逻辑;
+ * function_call / function_call_output / reasoning / event_msg 都不出现在结果里
+ * (只要正文,工具调用不索引)。
+ */
+export function parseCodexChain(
+  text: string,
+): Array<{ role: 'user' | 'assistant'; ts: string; content: string }> {
+  const out: Array<{ role: 'user' | 'assistant'; ts: string; content: string }> = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let env: CodexLineEnvelope;
+    try {
+      env = JSON.parse(line) as CodexLineEnvelope;
+    } catch {
+      continue;
+    }
+    if (env.type !== 'response_item') continue;
+    const p = env.payload ?? {};
+    if (p.type !== 'message') continue;
+    const role = p.role === 'user' ? 'user' : p.role === 'assistant' ? 'assistant' : null;
+    if (!role) continue;
+    const joined = joinTextBlocks(p.content);
+    if (!joined) continue;
+    out.push({
+      role,
+      ts: typeof env.timestamp === 'string' ? env.timestamp : '',
+      content: joined,
+    });
+  }
+  return out;
+}

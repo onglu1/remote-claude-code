@@ -11,7 +11,7 @@
 import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { AgentAdapter, DiscoverSessionIdOpts, LaunchOpts, ResumeOpts, ToolUseEvent, TranscriptLike } from './adapter';
-import { CodexTranscriptTail } from './codexTranscript';
+import { CodexTranscriptTail, parseCodexChain } from './codexTranscript';
 
 export interface CodexAdapterOpts {
   serviceUser: string;
@@ -24,12 +24,40 @@ function codexSessionsRoot(home: string): string {
   return join(home, '.codex', 'sessions');
 }
 
-/** 扫描 YYYY/MM/DD 子目录里所有 rollout-*-<uuid>.jsonl,返回 {file,uuid,mtimeMs}。
+interface RolloutFile {
+  file: string;
+  uuid: string;
+  mtimeMs: number;
+  /** rollout 文件名里的启动时间;解析失败时退回 birthtime。 */
+  createdAtMs: number;
+}
+
+const DISCOVERY_START_GRACE_MS = 5000;
+
+function parseRolloutCreatedAt(name: string, fallbackMs: number): number {
+  const m = name.match(
+    /^rollout-(.*)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i,
+  );
+  const raw = m?.[1];
+  if (!raw) return fallbackMs;
+  if (/^\d+$/.test(raw)) {
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : fallbackMs;
+  }
+  const isoLocal = raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})$/);
+  if (isoLocal) {
+    const parsed = Date.parse(`${isoLocal[1]}T${isoLocal[2]}:${isoLocal[3]}:${isoLocal[4]}`);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallbackMs;
+}
+
+/** 扫描 YYYY/MM/DD 子目录里所有 rollout-*-<uuid>.jsonl,返回文件元数据。
  *  仅扫从 startedAt 起的"今天",大多数情况下够用;若需要跨日(午夜启动),sweep 前后几天。 */
-function scanRollouts(home: string, daysWindow = 2): Array<{ file: string; uuid: string; mtimeMs: number }> {
+function scanRollouts(home: string, daysWindow = 2): RolloutFile[] {
   const root = codexSessionsRoot(home);
   if (!existsSync(root)) return [];
-  const out: Array<{ file: string; uuid: string; mtimeMs: number }> = [];
+  const out: RolloutFile[] = [];
   const today = new Date();
   for (let i = 0; i < daysWindow; i++) {
     const d = new Date(today.getTime() - i * 86400_000);
@@ -49,7 +77,12 @@ function scanRollouts(home: string, daysWindow = 2): Array<{ file: string; uuid:
       const file = join(dir, name);
       try {
         const st = statSync(file);
-        out.push({ file, uuid: m[1].toLowerCase(), mtimeMs: st.mtimeMs });
+        out.push({
+          file,
+          uuid: m[1].toLowerCase(),
+          mtimeMs: st.mtimeMs,
+          createdAtMs: parseRolloutCreatedAt(name, st.birthtimeMs),
+        });
       } catch { /* 文件刚消失,跳过 */ }
     }
   }
@@ -153,12 +186,21 @@ export function makeCodexAdapter(opts: CodexAdapterOpts): AgentAdapter {
 
     async discoverSessionId(opts2: DiscoverSessionIdOpts): Promise<string | null> {
       const home = opts.homeFor(opts2.unixUser);
+      const excluded = new Set(
+        [opts2.tentativeSessionId, ...(opts2.excludeSessionIds ?? [])]
+          .map((s) => s.toLowerCase()),
+      );
       const start = Date.now();
       const poll = 200;
       while (Date.now() - start < opts2.timeoutMs) {
-        const matches = scanRollouts(home, 2).filter((r) => r.mtimeMs >= opts2.startedAt && rolloutMatchesCwd(r.file, opts2.cwd));
+        const matches = scanRollouts(home, 2).filter(
+          (r) =>
+            r.createdAtMs >= opts2.startedAt - DISCOVERY_START_GRACE_MS &&
+            !excluded.has(r.uuid) &&
+            rolloutMatchesCwd(r.file, opts2.cwd),
+        );
         if (matches.length > 0) {
-          matches.sort((a, b) => b.mtimeMs - a.mtimeMs);
+          matches.sort((a, b) => b.createdAtMs - a.createdAtMs || b.mtimeMs - a.mtimeMs);
           return matches[0].uuid;
         }
         await new Promise((r) => setTimeout(r, poll));
@@ -168,6 +210,10 @@ export function makeCodexAdapter(opts: CodexAdapterOpts): AgentAdapter {
 
     parseToolUseEvents(_text: string): ToolUseEvent[] {
       return [];  // codex 不接 ① 信号;IdleSweeper 靠 ③ transcript mtime / ⑤ pane hash
+    },
+
+    parseTranscriptText(text: string, _sessionId: string): Array<{ role: 'user' | 'assistant'; ts: string; content: string }> {
+      return parseCodexChain(text);
     },
   };
 }

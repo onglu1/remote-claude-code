@@ -4,7 +4,7 @@
  * 接口后面。零行为变化——只是抽象层注册入口。
  */
 import { buildClaudeCmd } from '../launch';
-import { locateTranscript, projectsDirFor, TranscriptTail } from '../transcript';
+import { locateTranscript, projectsDirFor, TranscriptTail, parseClaudeChain } from '../transcript';
 import { parseToolUseEvents as parseClaudeToolUseEvents } from '../../activity';
 import type { AgentAdapter, LaunchOpts, ResumeOpts, ToolUseEvent, TranscriptLike, DiscoverSessionIdOpts } from './adapter';
 
@@ -60,6 +60,11 @@ export function makeClaudeAdapter(serviceUser: string): AgentAdapter {
     },
     parseToolUseEvents(text: string): ToolUseEvent[] {
       return parseClaudeToolUseEvents(text);
+    },
+    parseTranscriptText(text: string, _sessionId: string): Array<{ role: 'user' | 'assistant'; ts: string; content: string }> {
+      // claude jsonl 是 self-contained 的:整段文本里有所有 uuid/parentUuid。
+      // 复用 transcript.ts 的纯函数,与 TranscriptTail.activeChain 同一份逻辑。
+      return parseClaudeChain(text);
     },
   };
 }
