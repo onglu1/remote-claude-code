@@ -5,8 +5,8 @@ function makeDeps(): SweeperDeps & { _calls: { killed: string[]; closedConvs: st
   const _calls = { killed: [] as string[], closedConvs: [] as string[] };
   const fakeConvs = {
     listAllAlive: () => [
-      { id: 'c1', projectId: 'p', tmuxName: 't1', sessionId: 's1', ownerId: 'u1' },
-      { id: 'c2', projectId: 'p', tmuxName: 't2', sessionId: 's2', ownerId: 'u2' },
+      { id: 'c1', projectId: 'p', tmuxName: 't1', sessionId: 's1', agentKind: 'claude' as const, cwd: '/tmp/p', ownerId: 'u1' },
+      { id: 'c2', projectId: 'p', tmuxName: 't2', sessionId: 's2', agentKind: 'claude' as const, cwd: '/tmp/p', ownerId: 'u2' },
     ],
     update: vi.fn((_projectId: string, id: string, _patch: { closedAt?: string }) => {
       _calls.closedConvs.push(id);

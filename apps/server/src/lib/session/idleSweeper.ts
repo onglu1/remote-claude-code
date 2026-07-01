@@ -1,4 +1,16 @@
+import type { AgentKind } from '@rcc/shared';
 import type { TickResult } from './activity';
+
+/** measureIdle 需要按 agentKind 选对应 adapter 定位 transcript,cwd 是 codex 定位 rollout 文件必需的过滤条件。 */
+export interface SweeperConv {
+  id: string;
+  projectId: string;
+  tmuxName: string;
+  sessionId: string;
+  agentKind: AgentKind;
+  cwd: string;
+  ownerId?: string;
+}
 
 /**
  * IdleSweeper 不依赖具体 ConversationStore/UserStore/Tmux/Registry 类,
@@ -6,7 +18,7 @@ import type { TickResult } from './activity';
  */
 export interface SweeperDeps {
   conversations: {
-    listAllAlive: () => Array<{ id: string; projectId: string; tmuxName: string; sessionId: string; ownerId?: string }>;
+    listAllAlive: () => SweeperConv[];
     update: (projectId: string, id: string, patch: { closedAt?: string }) => unknown;
   };
   users: {
@@ -20,9 +32,7 @@ export interface SweeperDeps {
     isActive: (projectId: string, id: string) => boolean;
     forceClose: (projectId: string, id: string) => void;
   };
-  measureIdle: (
-    conv: { id: string; projectId: string; tmuxName: string; sessionId: string; ownerId?: string },
-  ) => TickResult;
+  measureIdle: (conv: SweeperConv) => TickResult;
   now: () => number;
 }
 

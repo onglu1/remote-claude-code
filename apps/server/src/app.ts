@@ -27,7 +27,6 @@ import { registerMeRoutes } from './routes/me';
 import { registerVscodeRoutes } from './routes/vscode';
 import { IdleSweeper } from './lib/session/idleSweeper';
 import { createActivityState, tickActivity, type ActivityIO, type ActivityState } from './lib/session/activity';
-import { locateTranscript, projectsDirFor } from './lib/session/chat/transcript';
 import { conversationRuntimeKey } from './lib/conversationIdentity';
 import { makeResolveUnixUser } from './lib/resolveUnixUser';
 
@@ -144,14 +143,21 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
     {
       conversations: {
         listAllAlive: () => {
-          // 把 projectId → ownerId 映射建好,sweeper 才能拿用户偏好(idleCloseHours)。
+          // 把 projectId → ownerId/path 映射建好:owner 给 sweeper 拿用户偏好(idleCloseHours),
+          // path 是 codex adapter.locateTranscript 按 cwd 过滤 rollout 文件的必需参数。
           const owners = new Map<string, string | undefined>();
-          for (const p of ctx.projects.load()) owners.set(p.id, p.ownerId);
+          const paths = new Map<string, string>();
+          for (const p of ctx.projects.load()) {
+            owners.set(p.id, p.ownerId);
+            paths.set(p.id, p.path);
+          }
           return ctx.conversations.listAllAlive().map((c) => ({
             id: c.id,
             projectId: c.projectId,
             tmuxName: c.tmuxName,
             sessionId: c.sessionId,
+            agentKind: c.agentKind,
+            cwd: paths.get(c.projectId) ?? '',
             ownerId: owners.get(c.projectId),
           }));
         },
@@ -181,13 +187,14 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
         }
         // 多用户隔离:transcript / sidecar 路径按 conversation owner 的 unixUser 解析。
         const unixUser = resolveUnixUser(c.ownerId);
+        // 按 agentKind 走对应 adapter 定位 transcript——之前这里硬编码 claude 专属的
+        // locateTranscript(~/.claude/projects/*),codex 会话传进来恒定 null:①③两个信号
+        // (未配对 tool_use / transcript mtime 滑窗)对 codex 全程失效,只剩⑤pane hash 一个信号,
+        // 空闲误杀概率明显偏高。
         const r = tickActivity(
           state,
           {
-            transcriptPath: locateTranscript(
-              c.sessionId,
-              projectsDirFor(unixUser, ctx.config.serviceUser),
-            ),
+            transcriptPath: ctx.adapterFor(c.agentKind).locateTranscript(c.sessionId, unixUser, c.cwd),
             tmuxName: c.tmuxName,
             sessionId: c.sessionId,
             statuslineDir: `${ctx.config.statuslineDir}/${unixUser}`,

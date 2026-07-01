@@ -2,7 +2,9 @@ import { readFileSync, statSync, unlinkSync, mkdirSync, chmodSync } from 'node:f
 import path from 'node:path';
 import os from 'node:os';
 import argon2 from 'argon2';
+import type { AgentKind } from '@rcc/shared';
 import type { Config } from './config';
+import type { AgentAdapter } from './lib/session/chat/agent/adapter';
 import { ProjectStore } from './lib/projects';
 import { UserStore } from './lib/users';
 import { SubUserStore } from './lib/subUsers';
@@ -38,6 +40,12 @@ export interface AppContext {
   agentAccess: AgentAccessStore;
   /** 跨会话索引层(SQLite)。给搜索/摘要/迁移/用量当统一中间层。 */
   sessionIndex: SessionIndex;
+  /**
+   * 按 agentKind 选适配器(claude/codex 各一份,进程内缓存复用)。
+   * 任何要按 agent 类型分支的横切逻辑(transcript 定位、活动探测等)都该走这个入口,
+   * 不要各处各写一份 `kind === 'codex' ? ... : ...` 或直接硬编码 claude 专属实现。
+   */
+  adapterFor: (kind: AgentKind) => AgentAdapter;
   /**
    * @deprecated 直接拿 ServiceUser 实例。新代码用 getTmux(unixUser) 按目标 unix 取实例。
    * 保留是为了渐进迁移期间下游 routes 不爆炸。
@@ -167,6 +175,9 @@ export async function buildContext(config: Config): Promise<AppContext> {
     // (与 projectsDirFor 的跨用户 home 解析同源)。
     homeFor: (u: string) => (u === config.serviceUser ? os.homedir() : `/home/${u}`),
   });
+  /** 单一入口:按 agentKind 选适配器。下面 SessionIndex/chatRegistry/返回值统一用它,
+   * 避免 `kind === 'codex' ? ... : ...` 三处各写一份、以后加第三种 agent 容易漏改。 */
+  const adapterFor = (kind: AgentKind): AgentAdapter => (kind === 'codex' ? codexAdapter : claudeAdapter);
 
   // SessionIndex:跨会话索引 + 全文搜索。注入 conversations/projects/adapters,
   // 启动时 sweep 所有已登记会话;chatSession 跑期间 inline 推送新消息;每 60s mtime 校对兜底。
@@ -196,7 +207,7 @@ export async function buildContext(config: Config): Promise<AppContext> {
         return p ? { id: p.id, ownerId: p.ownerId, path: p.path } : undefined;
       },
     },
-    adapterFor: (kind) => (kind === 'codex' ? codexAdapter : claudeAdapter),
+    adapterFor,
     resolveUnixUser: resolveUnixUserForIndex,
     readText: (p) => readFileSync(p, 'utf8'),
     statFile: (p) => {
@@ -214,7 +225,7 @@ export async function buildContext(config: Config): Promise<AppContext> {
     const effectiveUnixUser = spec.unixUser ?? config.serviceUser;
     const perUserTmux = getTmux(effectiveUnixUser);
     // 按会话 agentKind 选适配器:transcript 定位/tail、启动命令、capabilities 全随之而变。
-    const adapter = spec.agentKind === 'codex' ? codexAdapter : claudeAdapter;
+    const adapter = adapterFor(spec.agentKind);
     // tail / hasTranscript 都委托给 adapter:claude 扫 ~/.claude/projects/*,
     // codex 扫 ~/.codex/sessions/YYYY/MM/DD/*,context 不再手动 new TranscriptTail。
     const tail = adapter.makeTranscriptTail(spec.sessionId, effectiveUnixUser, spec.cwd);
@@ -291,6 +302,7 @@ export async function buildContext(config: Config): Promise<AppContext> {
     folders,
     agentAccess,
     sessionIndex,
+    adapterFor,
     tmux,
     getTmux,
     // 多用户隔离 2026-06-24:终端 SessionRegistry 不再 baked-in ServiceUser 的 Tmux,
