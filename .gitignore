@@ -24,6 +24,10 @@ config/agent-access.json
 # 子用户(N:1 挂主账号)与文件夹分组,都是私本运行时数据
 config/subusers.json
 config/folders.json
+# SessionIndex 搜索索引(SQLite,可从 transcript 全量重建),运行时产物不进库
+config/sessionIndex.db
+config/sessionIndex.db-shm
+config/sessionIndex.db-wal
 data/
 # 开发用 git worktree（隔离工作区，不进库）
 .worktrees/
