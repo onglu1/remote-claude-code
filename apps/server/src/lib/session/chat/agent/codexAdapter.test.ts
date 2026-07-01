@@ -162,6 +162,58 @@ describe('codexAdapter', () => {
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
+  it('discoverSessionId:旧 rollout 后续写入导致 mtime 变新也不能被当成本次新会话', async () => {
+    const tmpHome = path.join(os.tmpdir(), `rcc-codex-disc-mtime-${Date.now()}-${Math.random()}`);
+    const adapterT = makeCodexAdapter({
+      serviceUser: os.userInfo().username,
+      homeFor: () => tmpHome,
+    });
+    const cwd = '/tmp/current-project';
+    const oldSid = '12121212-1212-1212-1212-121212121212';
+    const newSid = '23232323-2323-2323-2323-232323232323';
+    const startedAt = Date.now();
+    const oldFile = writeRollout(tmpHome, oldSid, cwd, [], startedAt - 60_000);
+    fs.utimesSync(oldFile, new Date(startedAt + 500), new Date(startedAt + 500));
+    setTimeout(() => {
+      writeRollout(tmpHome, newSid, cwd, [], startedAt + 800);
+    }, 100);
+
+    const got = await adapterT.discoverSessionId({
+      tentativeSessionId: 'placeholder',
+      unixUser: os.userInfo().username,
+      cwd,
+      timeoutMs: 2000,
+      startedAt,
+    });
+    expect(got).toBe(newSid);
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  it('discoverSessionId:排除已经登记给其它会话的 UUID', async () => {
+    const tmpHome = path.join(os.tmpdir(), `rcc-codex-disc-exclude-${Date.now()}-${Math.random()}`);
+    const adapterT = makeCodexAdapter({
+      serviceUser: os.userInfo().username,
+      homeFor: () => tmpHome,
+    });
+    const cwd = '/tmp/current-project';
+    const startedAt = Date.now();
+    const existingSid = '45454545-4545-4545-4545-454545454545';
+    const newSid = '56565656-5656-5656-5656-565656565656';
+    writeRollout(tmpHome, newSid, cwd, [], startedAt + 100);
+    writeRollout(tmpHome, existingSid, cwd, [], startedAt + 300);
+
+    const got = await adapterT.discoverSessionId({
+      tentativeSessionId: 'placeholder',
+      excludeSessionIds: [existingSid],
+      unixUser: os.userInfo().username,
+      cwd,
+      timeoutMs: 300,
+      startedAt,
+    });
+    expect(got).toBe(newSid);
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
   it('discoverSessionId 超时返回 null', async () => {
     const tmpHome = path.join(os.tmpdir(), `rcc-codex-timeout-${Date.now()}-${Math.random()}`);
     fs.mkdirSync(tmpHome, { recursive: true });
