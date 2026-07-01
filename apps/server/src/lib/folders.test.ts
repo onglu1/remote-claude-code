@@ -74,6 +74,20 @@ describe('FolderStore', () => {
     expect(convs.get(c2.id)?.folderId).toBeNull();
   });
 
+  it('remove 时垃圾箱里(已软删除)的会话也要清 folderId,不留悬空引用', () => {
+    const convs = new ConversationStore(convsFile);
+    const store = new FolderStore(foldersFile, convs);
+    const f = store.create('proj', 'user1', 'A');
+    const c1 = convs.create('proj', '会话1');
+    convs.update(c1.id, { folderId: f.id });
+    convs.softDelete(c1.id);
+
+    const r = store.remove(f.id);
+    expect(r.reassigned).toBe(1);
+    const trashed = convs.listDeletedByProject('proj').find((c) => c.id === c1.id);
+    expect(trashed?.folderId).toBeNull();
+  });
+
   it('reorder 按传入顺序更新 sortOrder', () => {
     const convs = new ConversationStore(convsFile);
     const store = new FolderStore(foldersFile, convs);

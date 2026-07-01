@@ -4,6 +4,14 @@ import crypto from 'node:crypto';
 import { FolderSchema, type Folder } from '@rcc/shared';
 import type { ConversationStore } from './conversations';
 
+function newFolderId(existing: Folder[]): string {
+  let id = '';
+  do {
+    id = `fld_${crypto.randomBytes(6).toString('hex')}`;
+  } while (existing.some((f) => f.id === id));
+  return id;
+}
+
 /**
  * 文件夹存储:JSON 平铺,按 (projectId, ownerId) 隔离;
  * remove 时把内部会话的 folderId 置 null,保证不出现悬空引用。
@@ -41,7 +49,7 @@ export class FolderStore {
       throw new Error(`duplicate folder name: ${trimmed}`);
     }
     const folder: Folder = FolderSchema.parse({
-      id: `fld_${crypto.randomBytes(4).toString('hex')}`,
+      id: newFolderId(all),
       projectId,
       ownerId,
       name: trimmed,
@@ -74,14 +82,21 @@ export class FolderStore {
     this.write(next);
   }
 
-  /** 删除文件夹;内部会话 folderId 置 null。返回被重排的会话数。 */
+  /**
+   * 删除文件夹;内部会话 folderId 置 null。返回被重排的会话数。
+   * 必须连垃圾箱(已软删除)里的会话一起扫——listByProject 只看「活动」会话,
+   * 漏了软删除的话,这些会话的 folderId 会变成指向已不存在文件夹的悬空引用,
+   * 恢复出来后前端按 folderId 分组会找不到对应文件夹。
+   */
   remove(id: string): { reassigned: number } {
     const all = this.loadAll();
     const target = all.find((f) => f.id === id);
     if (!target) return { reassigned: 0 };
-    const affected = this.conversations.listByProject(target.projectId).filter((c) => c.folderId === id);
+    const affected = this.conversations
+      .listAll()
+      .filter((c) => c.projectId === target.projectId && c.folderId === id);
     for (const c of affected) {
-      this.conversations.update(c.id, { folderId: null });
+      this.conversations.updateInProject(c.projectId, c.id, { folderId: null });
     }
     this.write(all.filter((f) => f.id !== id));
     return { reassigned: affected.length };
