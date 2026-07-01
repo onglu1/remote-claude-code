@@ -16,6 +16,24 @@ function newConversationId(existing: StoredConversation[]): string {
 }
 
 /**
+ * 老数据缺字段的默认值补全——loadAll()/migrate() 唯一的公共来源,
+ * 避免两处各写一份清单、新增字段时漏改其中一处(曾经的真实 gap:
+ * starred/lastActivityAt 只在 migrate() 里补,loadAll() 没补,没跑过
+ * migrate() 就直接读会拿到 undefined)。
+ */
+function withDefaults(c: Partial<StoredConversation>): StoredConversation {
+  return {
+    ...c,
+    sessionId: c.sessionId ?? crypto.randomUUID(),
+    effort: c.effort ?? 'max',
+    agentKind: c.agentKind ?? 'claude',
+    codexSessionDiscovered: c.codexSessionDiscovered ?? false,
+    starred: c.starred ?? false,
+    lastActivityAt: c.lastActivityAt ?? c.createdAt,
+  } as StoredConversation;
+}
+
+/**
  * 会话元数据存储（id/name/tmuxName/sessionId/createdAt/deletedAt）。
  * 存活态由 tmux 实时给出;deletedAt 在则表示软删除(垃圾箱),常规列表过滤掉,可恢复或彻底删。
  */
@@ -30,44 +48,18 @@ export class ConversationStore {
   }
 
   private loadAll(): StoredConversation[] {
-    // 防御性补全：正常情况下 migrate() 已确保每条都有 sessionId；旧记录补 effort 默认。
-    // agentKind/codexSessionDiscovered 是 codex 支持新增的字段，老 conversations.json 没有
-    // → 回填默认(沿用 sessionId/effort 的防御性补全模式，零数据迁移脚本)。
-    return this.loadRaw().map((c) => ({
-      ...(c as StoredConversation),
-      sessionId: c.sessionId ?? crypto.randomUUID(),
-      effort: c.effort ?? 'max',
-      agentKind: c.agentKind ?? 'claude',
-      codexSessionDiscovered: c.codexSessionDiscovered ?? false,
-    }));
+    // 防御性补全:正常情况下 migrate() 已在启动时补好这些字段;这里再兜底一次
+    // 是双保险(比如手动改过 conversations.json/.bak 又没重启服务)。
+    return this.loadRaw().map(withDefaults);
   }
 
-  /**
-   * 一次性迁移：给老数据补缺失字段:
-   *  - sessionId 缺 → 随机 UUID(旧版会话无 sessionId)
-   *  - starred undefined → false
-   *  - lastActivityAt 缺且有 createdAt → 用 createdAt 兜底
-   */
+  /** 一次性迁移:把 withDefaults 的结果落盘,减少每次读都要现算的老数据量。 */
   migrate(): void {
     const list = this.loadRaw();
-    let changed = false;
-    const next = list.map((c) => {
-      const patch: Partial<StoredConversation> = { ...c };
-      if (!patch.sessionId) {
-        changed = true;
-        patch.sessionId = crypto.randomUUID();
-      }
-      if (patch.starred === undefined) {
-        changed = true;
-        patch.starred = false;
-      }
-      if (!patch.lastActivityAt && patch.createdAt) {
-        changed = true;
-        patch.lastActivityAt = patch.createdAt;
-      }
-      return patch;
-    });
-    if (changed) this.write(next as StoredConversation[]);
+    const next = list.map(withDefaults);
+    if (JSON.stringify(list) !== JSON.stringify(next)) {
+      this.write(next);
+    }
   }
 
   /** 项目下的「活动」会话(不含垃圾箱)。 */

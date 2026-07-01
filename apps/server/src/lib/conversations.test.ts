@@ -231,6 +231,10 @@ describe('ConversationStore agentKind/launchCommand', () => {
     expect(list[0].agentKind).toBe('claude');
     expect(list[0].codexSessionDiscovered).toBe(false);
     expect(list[0].launchCommand).toBeUndefined();
+    // starred/lastActivityAt 是 migrate() 一次性迁移覆盖的字段,但没跑过 migrate()
+    // 就直接 loadAll() 时(比如手动改过 conversations.json 又没重启)也不该读出 undefined。
+    expect(list[0].starred).toBe(false);
+    expect(list[0].lastActivityAt).toBe('2026-06-20T00:00:00.000Z');
   });
 
   it('update 能改 sessionId 和 codexSessionDiscovered(codex 首次回写场景)', () => {
