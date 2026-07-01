@@ -20,7 +20,14 @@ describe('AgentAdapter 接口契约（类型层面）', () => {
     // 用一个空 stub 验证接口形状；契约靠类型 + 编译。
     const stub: Partial<AgentAdapter> = {
       kind: 'claude',
-      capabilities: { effort: true, askHook: true, hud: true, rewind: true, presetSessionId: true },
+      capabilities: {
+        effort: true,
+        askHook: true,
+        hud: true,
+        rewind: true,
+        presetSessionId: true,
+        paneRunningSignal: true,
+      },
     };
     expect(stub.kind).toBe('claude');
     expect(stub.capabilities?.askHook).toBe(true);

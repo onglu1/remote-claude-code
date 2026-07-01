@@ -29,7 +29,7 @@ function makeFakeClaudeAdapter(): AgentAdapter {
   };
   return {
     kind: 'claude',
-    capabilities: { effort: true, askHook: true, hud: true, rewind: true, presetSessionId: true },
+    capabilities: { effort: true, askHook: true, hud: true, rewind: true, presetSessionId: true, paneRunningSignal: true },
     buildLaunchCmd: (o) => wrap(o, `--session-id ${o.sessionId}`),
     buildResumeCmd: (o) => wrap(o, `--resume ${o.sessionId}`),
     locateTranscript: () => null,
@@ -44,7 +44,7 @@ function makeFakeClaudeAdapter(): AgentAdapter {
 function makeFakeCodexAdapter(overrides: Partial<AgentAdapter> = {}): AgentAdapter {
   return {
     kind: 'codex',
-    capabilities: { effort: false, askHook: false, hud: false, rewind: false, presetSessionId: false },
+    capabilities: { effort: false, askHook: false, hud: false, rewind: false, presetSessionId: false, paneRunningSignal: false },
     buildLaunchCmd: (o) => o.launchCommand,
     buildResumeCmd: (o) => `codex resume --yolo ${o.sessionId}`,
     locateTranscript: () => null,

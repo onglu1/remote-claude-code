@@ -67,6 +67,17 @@ export interface AppContext {
   askLaunchFor: (unixUser: string) => { envExport: string; settingsArg: string };
 }
 
+/**
+ * ChatSession.tick() 的 running 判定给 codex(capabilities.paneRunningSignal=false)用的
+ * 空闲阈值:codex 读屏 spinner/done 恒不命中,只能靠"有没有新 transcript 消息"续命,
+ * 默认阈值(claude 用,8 tick≈2s)对 codex 太激进,一次思考/工具调用中间隔稍长没落盘
+ * 新消息就会被误判"已完成"。放宽到 160 tick(≈40s @ 默认 250ms 轮询)。
+ * claude 保持 undefined,走 ChatSession 自己的默认值(零行为变化)。
+ */
+export function idleLimitFor(adapter: Pick<AgentAdapter, 'capabilities'>): number | undefined {
+  return adapter.capabilities.paneRunningSignal ? undefined : 160;
+}
+
 export async function buildContext(config: Config): Promise<AppContext> {
   const adminHash = config.adminPasswordHash
     ? config.adminPasswordHash
@@ -234,6 +245,7 @@ export async function buildContext(config: Config): Promise<AppContext> {
       {
         tmux: perUserTmux,
         scrape: scrapePane,
+        idleLimit: idleLimitFor(adapter),
         tail,
         adapter,
         // transcript 必须能由 adapter 在当前 cwd 下定位到。codexSessionDiscovered 只表示曾经

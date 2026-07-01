@@ -42,6 +42,7 @@ describe('codexAdapter', () => {
       hud: false,
       rewind: false,
       presetSessionId: false,
+      paneRunningSignal: false,
     });
   });
 

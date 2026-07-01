@@ -6,7 +6,7 @@ import type { ChatMessage } from '@rcc/shared';
 function fakeAdapter(): AgentAdapter {
   return {
     kind: 'claude',
-    capabilities: { effort: true, askHook: false, hud: false, rewind: true, presetSessionId: true },
+    capabilities: { effort: true, askHook: false, hud: false, rewind: true, presetSessionId: true, paneRunningSignal: true },
     buildLaunchCmd: () => 'noop',
     buildResumeCmd: () => 'noop',
     locateTranscript: () => null,

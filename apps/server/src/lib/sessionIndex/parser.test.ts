@@ -7,7 +7,7 @@ function fakeAdapter(
 ): AgentAdapter {
   return {
     kind: 'claude',
-    capabilities: { effort: true, askHook: true, hud: true, rewind: true, presetSessionId: true },
+    capabilities: { effort: true, askHook: true, hud: true, rewind: true, presetSessionId: true, paneRunningSignal: true },
     buildLaunchCmd: () => 'noop',
     buildResumeCmd: () => 'noop',
     locateTranscript: () => null,

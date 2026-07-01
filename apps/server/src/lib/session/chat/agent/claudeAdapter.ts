@@ -26,6 +26,7 @@ export function makeClaudeAdapter(serviceUser: string): AgentAdapter {
       hud: true,
       rewind: true,
       presetSessionId: true,
+      paneRunningSignal: true,
     },
     buildLaunchCmd(opts: LaunchOpts): string {
       return buildClaudeCmd({

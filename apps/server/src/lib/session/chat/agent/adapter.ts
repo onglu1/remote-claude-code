@@ -72,6 +72,14 @@ export interface AgentAdapter {
     rewind: boolean;
     /** 创建会话时预生成 sessionId（claude=true；codex=false 需启动后抓取）。 */
     presetSessionId: boolean;
+    /**
+     * 读屏能可靠识别"生成中/已完成"(spinner、完成态图案)。claude=true。
+     * codex(或其它 TUI 不一样的 agent)=false 时,ChatSession.tick() 的 running
+     * 状态判定完全没有 spinner/done 兜底,只能靠"有没有新 transcript 消息"续命——
+     * 据此把空闲判定阈值放宽(见 context.ts 组装 ChatSessionDeps 时对 idleLimit 的选取),
+     * 否则一次思考/工具调用中间隔稍长没落盘新消息,就会被误判成"已完成"。
+     */
+    paneRunningSignal: boolean;
   };
 
   /** 拼"首次启动"命令（无 transcript 时）。 */

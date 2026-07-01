@@ -146,6 +146,7 @@ export function makeCodexAdapter(opts: CodexAdapterOpts): AgentAdapter {
       hud: false,
       rewind: false,
       presetSessionId: false,
+      paneRunningSignal: false,
     },
 
     buildLaunchCmd(o: LaunchOpts): string {

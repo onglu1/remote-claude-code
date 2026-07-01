@@ -17,6 +17,7 @@ describe('claudeAdapter', () => {
       hud: true,
       rewind: true,
       presetSessionId: true,
+      paneRunningSignal: true,
     });
   });
 
