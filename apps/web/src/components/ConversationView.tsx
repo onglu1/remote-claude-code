@@ -1,6 +1,13 @@
+import { lazy, Suspense, useEffect, useState } from 'react';
 import type { Project, Conversation, SessionView } from '@rcc/shared';
 import { Terminal } from './Terminal';
 import { ChatView } from './chat/ChatView';
+import { VscodeFrame } from './VscodeFrame';
+import { api } from '../lib/api';
+
+const WorkspacePane = lazy(() =>
+  import('./WorkspacePane').then((m) => ({ default: m.WorkspacePane })),
+);
 
 /**
  * 会话视图分发器：按 view 渲染聊天或终端。
@@ -24,5 +31,61 @@ export function ConversationView({
   onSwitchView: () => void;
 }) {
   const common = { project, conversation, onBack, onSwitchView };
-  return view === 'chat' ? <ChatView {...common} /> : <Terminal {...common} />;
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [vscodeOpen, setVscodeOpen] = useState(false);
+  const [vscodeUrl, setVscodeUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setVscodeUrl(null);
+    api
+      .getVscode(project.id)
+      .then((r) => {
+        if (alive) setVscodeUrl(r.enabled ? r.url : null);
+      })
+      .catch(() => {
+        if (alive) setVscodeUrl(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [project.id]);
+
+  return (
+    <div className={`conversation-shell ${workspaceOpen ? 'workspace-open' : ''}`}>
+      <div className="conversation-main">
+        {view === 'chat' ? <ChatView {...common} /> : <Terminal {...common} />}
+      </div>
+      <Suspense fallback={null}>
+        <WorkspacePane
+          project={project}
+          open={workspaceOpen}
+          onClose={() => setWorkspaceOpen(false)}
+        />
+      </Suspense>
+      <button
+        className={`workspace-fab ${workspaceOpen ? 'active' : ''}`}
+        onClick={() => {
+          setWorkspaceOpen((v) => !v);
+        }}
+        title={workspaceOpen ? '隐藏文件编辑器' : '打开文件编辑器'}
+        aria-label={workspaceOpen ? '隐藏文件编辑器' : '打开文件编辑器'}
+      >
+        文件
+      </button>
+      {vscodeUrl && !vscodeOpen && (
+        <button
+          className="vscode-fab"
+          onClick={() => setVscodeOpen(true)}
+          title="打开 VSCode Web"
+          aria-label="打开 VSCode Web"
+        >
+          VSCode
+        </button>
+      )}
+      {vscodeUrl && vscodeOpen && (
+        <VscodeFrame project={project} url={vscodeUrl} onClose={() => setVscodeOpen(false)} />
+      )}
+    </div>
+  );
 }

@@ -127,6 +127,29 @@ npm run setup-statusline -- --undo # 还原
 
 不装也能用,HUD 会退回读屏推算模式。
 
+### VSCode Web 浮窗(可选)
+
+如果你希望在聊天/终端旁边直接打开一个完整 VSCode Web，可以配置
+`code-server` / `openvscode-server`。推荐走同源反代：外部只访问 remote-cc 一个端口，
+VSCode Web 只绑定 `127.0.0.1` 内部地址，remote-cc 用 `/vscode/` 代理过去：
+
+```bash
+# 外部浏览器访问的是 https://你的 remote-cc/vscode/...
+RCC_VSCODE_PROXY_TARGET='http://127.0.0.1:8080'
+RCC_VSCODE_PROXY_PREFIX='/vscode'
+
+# 可选：让 remote-cc 启动时顺手拉起 VSCode Web；也可以留空，自己用 systemd/tmux 管。
+RCC_VSCODE_COMMAND='code-server --auth none --bind-addr 127.0.0.1:8080'
+```
+
+未设置 `RCC_VSCODE_URL_TEMPLATE` 时，配置了 `RCC_VSCODE_PROXY_TARGET` 会默认生成
+`/vscode/?folder={path}`，其中 `{path}` 是 URL 编码后的项目绝对路径。你也可以显式配置
+`RCC_VSCODE_URL_TEMPLATE` 做直连或自定义 URL；模板变量还支持 `{pathRaw}`、`{id}`、`{name}`。
+
+注意：VSCode Web 本身仍是一个 HTTP/WebSocket 服务；remote-cc 可以维护它的生命周期并隐藏内部端口，
+但不能把 iframe “进程内调用”成无 URL 的东西。浏览器必须加载一个 URL。若目标 VSCode 服务设置了
+禁止 iframe 的安全头，remote-cc 的同源代理会移除常见的 `X-Frame-Options` / CSP 响应头。
+
 开机自启(可选):往用户 crontab 加
 
 ```
