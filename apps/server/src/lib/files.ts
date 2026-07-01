@@ -60,8 +60,19 @@ export class FileBrowser {
   constructor(private readonly roots: string[]) {}
 
   private rootFor(relPath: string): string {
-    // 简化：单根场景直接用 roots[0]；多根时取第一个能容纳的根
+    // 简化：单根场景直接用 roots[0]；多根时取真正存在该路径的根。
+    // resolveWithin 只做越界检查、不判断存在性，所以不能仅凭它不抛错就选根，
+    // 否则任意合法相对路径都会恒定落在 roots[0]，第 2 个及以后的根永远不可达。
     if (this.roots.length === 1) return this.roots[0];
+    for (const r of this.roots) {
+      try {
+        const abs = resolveWithin(r, relPath);
+        if (fs.existsSync(abs)) return r;
+      } catch {
+        /* try next */
+      }
+    }
+    // 目标在所有根下都不存在（例如新建文件）：退回第一个不越界的根。
     for (const r of this.roots) {
       try {
         resolveWithin(r, relPath);

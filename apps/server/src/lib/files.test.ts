@@ -78,6 +78,30 @@ describe('FileBrowser', () => {
   });
 });
 
+describe('FileBrowser 多根', () => {
+  let root2: string;
+
+  beforeEach(() => {
+    root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'rcc-files-2-'));
+    fs.mkdirSync(path.join(root2, 'sub2'));
+    fs.writeFileSync(path.join(root2, 'sub2', 'only-in-root2.txt'), 'root2 content');
+  });
+
+  afterEach(() => fs.rmSync(root2, { recursive: true, force: true }));
+
+  it('只存在于第二个根的文件也能被读到(不会恒定落在第一个根)', () => {
+    const fb = new FileBrowser([root, root2]);
+    const c = fb.readFile('sub2/only-in-root2.txt');
+    expect(c.content).toBe('root2 content');
+  });
+
+  it('只存在于第二个根的目录也能被列出', () => {
+    const fb = new FileBrowser([root, root2]);
+    const entries = fb.listDir('sub2');
+    expect(entries.map((e) => e.name)).toContain('only-in-root2.txt');
+  });
+});
+
 describe('listSubdirs', () => {
   it('只返回子目录并给出绝对路径', () => {
     const r = listSubdirs(root, '');
