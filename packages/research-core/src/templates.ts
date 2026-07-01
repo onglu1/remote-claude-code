@@ -730,7 +730,7 @@ rlab supersede task/013 --by task/024 --reason '重新设计'
 
 # 研究者:"这个证据塌了"
 rlab invalidate evidence/002 --reason 'fi_server 参数有误'
-# 然后看影响:
+# 然后看影响(要能列出东西,前提是这条链路当初用 --label depends-on 连过边——见下面「连边」):
 rlab affected-by evidence/002      # 列出被这条作废拖累的下游
 
 # 研究者:"这个想法不值得继续"
@@ -740,15 +740,19 @@ rlab drop idea/015 --reason '方向不值得'
 ### 拆分 / 合并 / 连边
 
 \`\`\`bash
-# 研究者:"把这个 thread 拆成两个子方向"
-rlab split thread/003 --into 'thread A title' 'thread B title'
+# 研究者:"这个想法拆成两个子方向"(split/merge 目前只认 idea 节点,--into 是逗号分隔的一个参数)
+rlab split idea/015 --into '子方向 A,子方向 B'
 
-# 研究者:"这两条线其实是一回事"
-rlab merge thread/004 --into thread/003
+# 研究者:"这几个想法算是想通了,可以立项了"(合并的产物固定是新建一个 task)
+rlab merge idea/015 idea/016 --title '立项:统一做法'
 
 # 一般化的连边
 rlab link task/007 evidence/008 --label produces
 rlab unlink task/007 evidence/008
+
+# 表达"这个依赖那个还没做完的" —— affected-by 只沿 label=depends-on 的边反向找下游,
+# 别的 label(比如上面的 produces)不会被它计入,想让 affected-by 有用就得显式连这条边
+rlab link task/010 task/009 --label depends-on
 
 # 容器关系(子节点搬家)
 rlab contain thread/003 idea/015

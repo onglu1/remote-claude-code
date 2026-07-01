@@ -26,6 +26,10 @@ describe('splitIdea', () => {
   it('原 idea 不存在 → throw', () => {
     expect(() => splitIdea(root, store, { id: 'idea/099', into: ['x'], now })).toThrow();
   });
+  it('对非 idea 节点 split → throw(与 mergeIdeas 对称,不该悄悄在别的类型下面挂 idea 子节点)', () => {
+    addNode(root, store, { type: 'task', title: 't', as: '009', now });
+    expect(() => splitIdea(root, store, { id: 'task/009', into: ['x'], now })).toThrow();
+  });
 });
 
 describe('mergeIdeas', () => {

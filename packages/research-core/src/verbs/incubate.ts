@@ -8,7 +8,8 @@ export interface SplitInput {
   now?: string;
 }
 export function splitIdea(root: string, store: NodeStore, input: SplitInput): ResearchNode[] {
-  store.read(input.id); // 校验原节点存在
+  const origin = store.read(input.id);
+  if (origin.type !== 'idea') throw new Error(`split 只接受 idea: ${input.id}`);
   const created: ResearchNode[] = [];
   for (const title of input.into) {
     created.push(addNode(root, store, { type: 'idea', title, parent: input.id, now: input.now }));
