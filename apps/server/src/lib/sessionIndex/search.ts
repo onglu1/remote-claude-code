@@ -42,6 +42,8 @@ function visibilityClause(visibility?: SearchOptions['visibility']): string {
       return 's.closed_at IS NOT NULL AND s.deleted_at IS NULL';
     case 'deleted':
       return 's.deleted_at IS NOT NULL';
+    case 'all':
+      return '1=1';
     case 'default':
     default:
       return 's.deleted_at IS NULL AND s.closed_at IS NULL';

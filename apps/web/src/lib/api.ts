@@ -314,7 +314,7 @@ export const api = {
     q?: string;
     projectId?: string;
     source?: 'claude' | 'codex';
-    visibility?: 'default' | 'starred' | 'closed' | 'deleted';
+    visibility?: 'default' | 'starred' | 'closed' | 'deleted' | 'all';
     limit?: number;
   } = {}) => {
     const qs = new URLSearchParams();

@@ -47,8 +47,8 @@ export function runSearchQuery(
     }
   }
   const source = q.source === 'claude' || q.source === 'codex' ? q.source : undefined;
-  const visibility = ['default', 'starred', 'closed', 'deleted'].includes(q.visibility ?? '')
-    ? (q.visibility as 'default' | 'starred' | 'closed' | 'deleted')
+  const visibility = ['default', 'starred', 'closed', 'deleted', 'all'].includes(q.visibility ?? '')
+    ? (q.visibility as 'default' | 'starred' | 'closed' | 'deleted' | 'all')
     : 'default';
   const limit = q.limit !== undefined ? Math.max(1, Math.min(Number(q.limit), 200)) : 50;
   const opts: SearchOptions = {

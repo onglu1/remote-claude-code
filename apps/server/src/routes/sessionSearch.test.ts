@@ -11,6 +11,7 @@ function seed(db: Db) {
   db.prepare(`INSERT INTO session (session_key, conv_id, project_id, namespace_id, unix_user, agent_kind, session_id, name, starred, created_at, last_activity_at, transcript_mtime_ms, indexed_at) VALUES ('p1:c1','c1','p1','ns-A','alice','claude','sid-A','one',0,'2026-06-29T00:00:00Z','2026-06-29T01:00:00Z',0,0)`).run();
   db.prepare(`INSERT INTO session (session_key, conv_id, project_id, namespace_id, unix_user, agent_kind, session_id, name, starred, created_at, last_activity_at, transcript_mtime_ms, indexed_at) VALUES ('p1:c2','c2','p1','ns-B','bob','claude','sid-B','two',0,'2026-06-29T00:00:00Z','2026-06-29T01:00:00Z',0,0)`).run();
   db.prepare(`INSERT INTO session (session_key, conv_id, project_id, namespace_id, unix_user, agent_kind, session_id, name, starred, created_at, last_activity_at, transcript_mtime_ms, indexed_at) VALUES ('p2:c1','c1','p-other','ns-B','bob','claude','sid-C','three',0,'2026-06-29T00:00:00Z','2026-06-29T01:00:00Z',0,0)`).run();
+  db.prepare(`INSERT INTO session (session_key, conv_id, project_id, namespace_id, unix_user, agent_kind, session_id, name, starred, created_at, last_activity_at, closed_at, transcript_mtime_ms, indexed_at) VALUES ('p1:c3','c3','p1','ns-A','alice','claude','sid-D','closed-one',0,'2026-06-29T00:00:00Z','2026-06-29T01:00:00Z','2026-06-29T02:00:00Z',0,0)`).run();
 }
 
 const userA: AuthUser = { id: 'u1', username: 'alice', role: 'user', kind: 'user', unixUser: 'alice', namespaceId: 'ns-A' };
@@ -81,6 +82,18 @@ describe('runSearchQuery', () => {
     const r = runSearchQuery(ctxFor(db), userB, { source: 'claude', visibility: 'default', limit: '10' });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.results.length).toBeLessThanOrEqual(10);
+  });
+
+  it('visibility=all 透传给 search,休眠会话也能搜到', () => {
+    const r = runSearchQuery(ctxFor(db), userA, { visibility: 'all' });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.results.map((x) => x.sessionKey)).toContain('p1:c3');
+  });
+
+  it('未知 visibility 值兜底为 default(休眠会话搜不到)', () => {
+    const r = runSearchQuery(ctxFor(db), userA, { visibility: 'bogus' });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.results.map((x) => x.sessionKey)).not.toContain('p1:c3');
   });
 
   it('恶意 namespace 参数被忽略(永远用 user.namespaceId)', () => {

@@ -32,7 +32,9 @@ export function SidebarSearch({ projectId, onSelect }: Props) {
     debounceRef.current = window.setTimeout(async () => {
       setLoading(true);
       try {
-        const { results } = await api.searchSessions({ q, projectId });
+        // 默认 visibility 会排除休眠/垃圾箱——但下面结果卡片本来就有"· 休眠"/"· 垃圾箱"
+        // 标签要渲染,搜索理应覆盖全部三态,不能只让"找回旧会话"这个最常见诉求落空。
+        const { results } = await api.searchSessions({ q, projectId, visibility: 'all' });
         setResults(results);
       } catch {
         setResults([]);

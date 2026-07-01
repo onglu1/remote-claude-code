@@ -104,6 +104,14 @@ describe('searchSessions', () => {
     expect(out.map((r) => r.sessionKey)).toEqual(['p1:c5']);
   });
 
+  it('visibility=all 不排除 closed/deleted,活动+休眠+垃圾箱都在', () => {
+    const out = searchSessions(db, { visibility: 'all' }, 'A');
+    const keys = out.map((r) => r.sessionKey);
+    expect(keys).toContain('p1:c1'); // 活动
+    expect(keys).toContain('p1:c3'); // closed
+    expect(keys).toContain('p1:c4'); // deleted
+  });
+
   it('projectId 缩小到指定项目', () => {
     const out = searchSessions(db, { projectId: 'p2' }, 'A');
     expect(out.map((r) => r.sessionKey)).toEqual(['p2:c1']);

@@ -40,7 +40,7 @@ export interface SearchOptions {
   query?: string;
   projectId?: string;
   source?: 'all' | 'claude' | 'codex';
-  visibility?: 'default' | 'starred' | 'closed' | 'deleted';
+  visibility?: 'default' | 'starred' | 'closed' | 'deleted' | 'all';
   folderId?: string | null;
   limit?: number;
 }
