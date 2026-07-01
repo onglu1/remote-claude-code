@@ -40,6 +40,13 @@ describe('FileBrowser', () => {
     expect(entries.map((e) => e.name)).toContain('a.txt');
   });
 
+  it('列目录：文件带 size，目录不带', () => {
+    const fb = new FileBrowser([root]);
+    const entries = fb.listDir('');
+    expect(entries.find((e) => e.name === 'a.txt')?.size).toBe(5);
+    expect(entries.find((e) => e.name === 'sub')?.size).toBeUndefined();
+  });
+
   it('读文本文件', () => {
     const fb = new FileBrowser([root]);
     const c = fb.readFile('a.txt');
@@ -55,6 +62,19 @@ describe('FileBrowser', () => {
   it('越界读取被拒', () => {
     const fb = new FileBrowser([root]);
     expect(() => fb.readFile('../../etc/passwd')).toThrow();
+  });
+
+  it('写文本文件后可读回', () => {
+    const fb = new FileBrowser([root]);
+    const c = fb.writeTextFile('sub/b.md', '# changed');
+    expect(c.kind).toBe('text');
+    expect(c.content).toBe('# changed');
+    expect(fs.readFileSync(path.join(root, 'sub', 'b.md'), 'utf8')).toBe('# changed');
+  });
+
+  it('越界写入被拒', () => {
+    const fb = new FileBrowser([root]);
+    expect(() => fb.writeTextFile('../escape.txt', 'x')).toThrow(PathTraversalError);
   });
 });
 

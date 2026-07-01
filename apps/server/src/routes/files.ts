@@ -47,4 +47,25 @@ export async function registerFileRoutes(app: FastifyInstance, ctx: AppContext):
       return reply.code(code).send({ error: (e as Error).message });
     }
   });
+
+  app.put('/api/projects/:id/file', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { path: relPath, content } = req.body as { path?: unknown; content?: unknown };
+    const project = ctx.projects.get(id);
+    if (!project || !canSeeProject(req.user!, project)) {
+      return reply.code(404).send({ error: 'project not found' });
+    }
+    if (typeof relPath !== 'string' || !relPath) {
+      return reply.code(400).send({ error: 'missing path' });
+    }
+    if (typeof content !== 'string') {
+      return reply.code(400).send({ error: 'missing content' });
+    }
+    try {
+      return { file: browserFor(project).writeTextFile(relPath, content) };
+    } catch (e) {
+      const code = e instanceof PathTraversalError ? 403 : 400;
+      return reply.code(code).send({ error: (e as Error).message });
+    }
+  });
 }

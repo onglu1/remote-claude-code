@@ -4,6 +4,7 @@ import mime from 'mime-types';
 import { type FileEntry } from '@rcc/shared';
 
 const MAX_TEXT_BYTES = 512 * 1024; // 512KB 以上文本截断
+const MAX_WRITE_BYTES = 2 * 1024 * 1024; // 浏览器编辑器保存上限，避免误写超大文件
 
 export class PathTraversalError extends Error {}
 
@@ -136,6 +137,27 @@ export class FileBrowser {
     }
 
     return { kind: 'binary', path: rel, mime: mimeType, size: stat.size };
+  }
+
+  writeTextFile(relPath: string, content: string): FileContent {
+    const bytes = Buffer.byteLength(content, 'utf8');
+    if (bytes > MAX_WRITE_BYTES) {
+      throw new Error('文件过大，浏览器编辑器最多保存 2MB 文本');
+    }
+
+    const root = this.rootFor(relPath);
+    const abs = resolveWithin(root, relPath);
+    if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) {
+      throw new Error('是目录，不是文件');
+    }
+
+    const parent = path.dirname(abs);
+    if (!fs.existsSync(parent) || !fs.statSync(parent).isDirectory()) {
+      throw new Error('父目录不存在');
+    }
+
+    fs.writeFileSync(abs, content, 'utf8');
+    return this.readFile(relPath);
   }
 }
 
