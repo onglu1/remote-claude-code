@@ -92,7 +92,8 @@ export interface SidebarTreeProps {
   onClosed: (conv: Conversation) => void;
   onResumed: (conv: Conversation) => void;
   onDeleted: (cid: string) => void;
-  /** 行内按钮:复制 sessionId、重命名、关闭(沿用原 ConversationList 行为) */
+  /** 行内按钮:复制 sessionId、重命名、删除/软删(沿用原 ConversationList 行为;
+   * 命名故意避开"关闭"——SessionContextMenu 里"关闭"专指进入休眠,这里其实是删除进垃圾箱) */
   onCopySessionId?: (conv: Conversation) => void;
   onRequestRename?: (conv: Conversation) => void;
   onRequestClose?: (conv: Conversation) => void;
@@ -327,10 +328,11 @@ export function SidebarTree(props: SidebarTreeProps) {
                         <button
                           type="button"
                           className="btn ghost sm"
-                          title="关闭(进垃圾箱可恢复)"
+                          title="删除(进垃圾箱可恢复)"
+                          aria-label="删除(进垃圾箱可恢复)"
                           onClick={() => onRequestClose(c)}
                         >
-                          关闭
+                          删除
                         </button>
                       )}
                     </>
