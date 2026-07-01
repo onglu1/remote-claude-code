@@ -31,6 +31,7 @@ export function connectChat(projectId: string, convId: string, handlers: ChatHan
   let ws: WebSocket | null = null;
   let closedByUser = false;
   let retry = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   const url = () => {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -113,7 +114,7 @@ export function connectChat(projectId: string, convId: string, handlers: ChatHan
       if (closedByUser) return;
       const delay = Math.min(1000 * 2 ** retry, 8000);
       retry += 1;
-      setTimeout(open, delay);
+      reconnectTimer = setTimeout(open, delay);
     };
     ws.onerror = () => ws?.close();
   };
@@ -126,6 +127,10 @@ export function connectChat(projectId: string, convId: string, handlers: ChatHan
     },
     close: () => {
       closedByUser = true;
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
       ws?.close();
     },
   };
