@@ -284,6 +284,25 @@ describe('POST .../conversations/batch', () => {
     expect(res.json().failed[0]).toMatchObject({ id: 'nope', reason: 'not_found' });
   });
 
+  it('已在垃圾箱(软删除)的 id:视同不存在,进 failed', async () => {
+    const cookie = await login('admin', 'test-pass');
+    const { projectId, convId } = await makeProjectWithConv(cookie, 'P-batch-deleted');
+    await app.inject({
+      method: 'DELETE',
+      url: `/api/projects/${projectId}/conversations/${convId}`,
+      cookies: { rcc_token: cookie },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${projectId}/conversations/batch`,
+      cookies: { rcc_token: cookie },
+      payload: { ids: [convId], action: 'star' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().succeeded).toEqual([]);
+    expect(res.json().failed[0]).toMatchObject({ id: convId, reason: 'not_found' });
+  });
+
   it('空 ids:400', async () => {
     const cookie = await login('admin', 'test-pass');
     const { projectId } = await makeProjectWithConv(cookie, 'P-batch-empty');

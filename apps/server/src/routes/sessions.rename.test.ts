@@ -168,6 +168,26 @@ describe('PATCH /api/projects/:id/conversations/:cid（会话改名）', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it('已软删除(垃圾箱)的会话 → 404,不能被改名', async () => {
+    const cookie = await login('admin', 'test-pass');
+    const { projectId, convId } = await makeProjectWithConv(cookie, 'P-rename-deleted');
+
+    const del = await app.inject({
+      method: 'DELETE',
+      url: `/api/projects/${projectId}/conversations/${convId}`,
+      cookies: { rcc_token: cookie },
+    });
+    expect(del.statusCode).toBe(200);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${projectId}/conversations/${convId}`,
+      cookies: { rcc_token: cookie },
+      payload: { name: '垃圾箱里也能改名?' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
   it('未登录 → 401', async () => {
     const res = await app.inject({
       method: 'PATCH',

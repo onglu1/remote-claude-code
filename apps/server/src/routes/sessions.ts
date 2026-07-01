@@ -183,20 +183,19 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
   );
 
   // 局部更新：name / folderId / starred。folderId 必须指向本项目存在文件夹;null 显式清除归属。
-  // 复用 ConversationStore.update;与其它会话路由同样的可见性过滤。
+  // 复用 ConversationStore.update;与其它会话路由同样的可见性过滤(含垃圾箱排除)。
   app.patch(
     '/api/projects/:id/conversations/:cid',
     { preHandler: requireAuth },
     async (req, reply) => {
       const { id, cid } = req.params as { id: string; cid: string };
-      const project = resolveVisibleProject(ctx, req.user!, id);
-      if (!project) return reply.code(404).send({ error: 'project not found' });
       const parse = PatchConvSchema.safeParse(req.body ?? {});
       if (!parse.success) {
         return reply.code(400).send({ error: parse.error.issues[0]?.message ?? 'bad request' });
       }
-      const conv = ctx.conversations.getInProject(id, cid);
-      if (!conv) {
+      // resolveSessionScope 默认排除 deletedAt:垃圾箱里的会话不该被改名/加星/挪文件夹。
+      const scope = resolveSessionScope(ctx, req.user!, id, cid);
+      if (!scope) {
         return reply.code(404).send({ error: 'conversation not found' });
       }
       // folderId 非空时校验存在且属于本项目;null 表示显式清除归属(允许)。
@@ -290,7 +289,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       const failed: { id: string; reason: string }[] = [];
       for (const cid of ids) {
         const conv = ctx.conversations.getInProject(id, cid);
-        if (!conv) {
+        // 垃圾箱里的会话对批量动作视同不存在,不能被 move/star/close 悄悄改动。
+        if (!conv || conv.deletedAt) {
           failed.push({ id: cid, reason: 'not_found' });
           continue;
         }
