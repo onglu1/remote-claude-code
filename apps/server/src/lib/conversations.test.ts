@@ -63,6 +63,56 @@ describe('ConversationStore', () => {
     const c = s.create('p', '接续', 'ab12cd34-ef56-7890-abcd-1234567890ab');
     expect(c.sessionId).toBe('ab12cd34-ef56-7890-abcd-1234567890ab');
   });
+
+  it('create 使用更长全局唯一 id,降低跨项目碰撞概率', () => {
+    const s = newStore();
+    const a = s.create('p1', 'A');
+    const b = s.create('p2', 'B');
+    expect(a.id).toMatch(/^[0-9a-f]{24}$/);
+    expect(b.id).toMatch(/^[0-9a-f]{24}$/);
+    expect(a.id).not.toBe(b.id);
+  });
+
+  it('getInProject / updateInProject 只命中指定项目,即使历史数据有重复 id', () => {
+    const dir = join(tmpdir(), `rcc-conv-scope-${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'conversations.json');
+    writeFileSync(file, JSON.stringify([
+      {
+        id: 'dup',
+        projectId: 'p1',
+        name: 'P1',
+        tmuxName: 'rcc-p1-dup',
+        sessionId: '11111111-1111-1111-1111-111111111111',
+        effort: 'max',
+        starred: false,
+        agentKind: 'claude',
+        codexSessionDiscovered: false,
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActivityAt: '2026-01-01T00:00:00Z',
+      },
+      {
+        id: 'dup',
+        projectId: 'p2',
+        name: 'P2',
+        tmuxName: 'rcc-p2-dup',
+        sessionId: '22222222-2222-2222-2222-222222222222',
+        effort: 'max',
+        starred: false,
+        agentKind: 'claude',
+        codexSessionDiscovered: false,
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActivityAt: '2026-01-01T00:00:00Z',
+      },
+    ], null, 2));
+
+    const store = new ConversationStore(file);
+    expect(store.getInProject('p2', 'dup')?.name).toBe('P2');
+    store.updateInProject('p2', 'dup', { name: 'P2-new' });
+    expect(store.getInProject('p1', 'dup')?.name).toBe('P1');
+    expect(store.getInProject('p2', 'dup')?.name).toBe('P2-new');
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe('ConversationStore migrate 扩字段', () => {

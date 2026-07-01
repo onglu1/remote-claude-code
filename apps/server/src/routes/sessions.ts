@@ -8,12 +8,13 @@ import { ConversationCreateSchema, decodeClientMessage, encodeServerMessage } fr
 import type { AppContext } from '../context';
 import { makeRequireAuth, resolveUser } from '../plugins/requireAuth';
 import { COOKIE_NAME } from '../lib/auth';
-import { canSeeProject } from '../lib/authz';
 import { computeWindow } from '../lib/session/scrollback';
 import { readPendingAsk } from '../lib/session/chat/askSidecar';
 import { makeClaudeAdapter } from '../lib/session/chat/agent/claudeAdapter';
 import { makeCodexAdapter } from '../lib/session/chat/agent/codexAdapter';
 import { resolveLaunchCommand } from '../lib/session/chat/agent/resolveLaunchCommand';
+import { conversationRuntimeKey } from '../lib/conversationIdentity';
+import { resolveSessionScope, resolveVisibleProject } from './sessionScope';
 // PATCH 入参:三选一(name/folderId/starred),至少给一个字段;trim 与长度约束保持旧 rename 语义。
 // folderId:undefined=不改、null=显式清除、字符串=指向某文件夹(下方路由校验存在与归属)。
 const PatchConvSchema = z
@@ -53,23 +54,24 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
   // 多用户隔离设计 2026-06-23:不再用 ctx.tmux 单例(那是 ServiceUser=wangleyan 的),
   // 否则跨 unix 用户的会话永远判 dead。
   async function aliveOf(
+    projectId: string,
     unixUser: string,
     conv: { id: string; tmuxName: string },
   ): Promise<boolean> {
     const alive = new Set(await ctx.getTmux(unixUser).listSessions());
-    return alive.has(conv.tmuxName) || ctx.registry.isActive(conv.id);
+    return alive.has(conv.tmuxName) || ctx.registry.isActive(conversationRuntimeKey(projectId, conv.id));
   }
 
   async function withAlive(projectId: string, unixUser: string): Promise<Conversation[]> {
     const alive = new Set(await ctx.getTmux(unixUser).listSessions());
     return ctx.conversations.listByProject(projectId).map((c) => ({
       ...c,
-      alive: alive.has(c.tmuxName) || ctx.registry.isActive(c.id),
+      alive: alive.has(c.tmuxName) || ctx.registry.isActive(conversationRuntimeKey(projectId, c.id)),
     }));
   }
 
-  function markConversationActive(convId: string) {
-    return ctx.conversations.markActive(convId, new Date().toISOString());
+  function markConversationActive(projectId: string, convId: string) {
+    return ctx.conversations.markActiveInProject(projectId, convId, new Date().toISOString());
   }
 
   // ---- 会话元数据 REST ----
@@ -78,8 +80,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     { preHandler: requireAuth },
     async (req, reply) => {
       const { id } = req.params as { id: string };
-      const project = ctx.projects.get(id);
-      if (!project || !canSeeProject(req.user!, project)) {
+      const project = resolveVisibleProject(ctx, req.user!, id);
+      if (!project) {
         return reply.code(404).send({ error: 'project not found' });
       }
       return { conversations: await withAlive(id, req.user!.unixUser) };
@@ -91,8 +93,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     { preHandler: requireAuth },
     async (req, reply) => {
       const { id } = req.params as { id: string };
-      const project = ctx.projects.get(id);
-      if (!project || !canSeeProject(req.user!, project)) {
+      const project = resolveVisibleProject(ctx, req.user!, id);
+      if (!project) {
         return reply.code(404).send({ error: 'project not found' });
       }
       const parse = ConversationCreateSchema.safeParse(req.body ?? {});
@@ -124,8 +126,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     { preHandler: requireAuth },
     async (req, reply) => {
       const { id } = req.params as { id: string };
-      const project = ctx.projects.get(id);
-      if (!project || !canSeeProject(req.user!, project)) {
+      const project = resolveVisibleProject(ctx, req.user!, id);
+      if (!project) {
         return reply.code(404).send({ error: 'project not found' });
       }
       const list = ctx.conversations.listDeletedByProject(id)
@@ -141,15 +143,11 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     { preHandler: requireAuth },
     async (req, reply) => {
       const { id, cid } = req.params as { id: string; cid: string };
-      const project = ctx.projects.get(id);
-      if (!project || !canSeeProject(req.user!, project)) {
-        return reply.code(404).send({ error: 'project not found' });
-      }
-      const conv = ctx.conversations.get(cid);
-      if (!conv || conv.projectId !== id) {
+      const scope = resolveSessionScope(ctx, req.user!, id, cid, { includeDeleted: true });
+      if (!scope || !scope.conversation.deletedAt) {
         return reply.code(404).send({ error: 'conversation not found' });
       }
-      const restored = ctx.conversations.restore(cid);
+      const restored = ctx.conversations.restoreInProject(id, cid);
       if (!restored) return reply.code(404).send({ error: 'conversation not found' });
       return { conversation: { ...restored, alive: false } };
     },
@@ -162,14 +160,11 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     { preHandler: requireAuth },
     async (req, reply) => {
       const { id, cid } = req.params as { id: string; cid: string };
-      const project = ctx.projects.get(id);
-      if (!project || !canSeeProject(req.user!, project)) {
-        return reply.code(404).send({ error: 'project not found' });
-      }
-      const conv = ctx.conversations.get(cid);
-      if (!conv || conv.projectId !== id) {
+      const scope = resolveSessionScope(ctx, req.user!, id, cid, { includeDeleted: true });
+      if (!scope) {
         return reply.code(404).send({ error: 'conversation not found' });
       }
+      const conv = scope.conversation;
       const hard = (req.query as { hard?: string }).hard === '1';
       // 标星会话拒软删(避免误丢进垃圾箱);硬删 hard=1 是显式动作,不拦。
       if (!hard && conv.starred) {
@@ -177,10 +172,11 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       }
       // tmux 一定杀(无论软/硬):软删时如果 TUI 还活着,留着也没意义且占资源。
       await ctx.getTmux(req.user!.unixUser).killSession(conv.tmuxName);
+      ctx.chatRegistry.forceClose(scope.runtimeKey);
       if (hard) {
-        ctx.conversations.hardDelete(cid);
+        ctx.conversations.hardDeleteInProject(id, cid);
       } else {
-        ctx.conversations.softDelete(cid);
+        ctx.conversations.softDeleteInProject(id, cid);
       }
       return { ok: true, hard };
     },
@@ -193,16 +189,14 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     { preHandler: requireAuth },
     async (req, reply) => {
       const { id, cid } = req.params as { id: string; cid: string };
-      const project = ctx.projects.get(id);
-      if (!project || !canSeeProject(req.user!, project)) {
-        return reply.code(404).send({ error: 'project not found' });
-      }
+      const project = resolveVisibleProject(ctx, req.user!, id);
+      if (!project) return reply.code(404).send({ error: 'project not found' });
       const parse = PatchConvSchema.safeParse(req.body ?? {});
       if (!parse.success) {
         return reply.code(400).send({ error: parse.error.issues[0]?.message ?? 'bad request' });
       }
-      const conv = ctx.conversations.get(cid);
-      if (!conv || conv.projectId !== id) {
+      const conv = ctx.conversations.getInProject(id, cid);
+      if (!conv) {
         return reply.code(404).send({ error: 'conversation not found' });
       }
       // folderId 非空时校验存在且属于本项目;null 表示显式清除归属(允许)。
@@ -212,9 +206,9 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
           return reply.code(400).send({ error: 'folder not found' });
         }
       }
-      const updated = ctx.conversations.update(cid, parse.data);
+      const updated = ctx.conversations.updateInProject(id, cid, parse.data);
       if (!updated) return reply.code(404).send({ error: 'conversation not found' });
-      return { conversation: { ...updated, alive: await aliveOf(req.user!.unixUser, updated) } };
+      return { conversation: { ...updated, alive: await aliveOf(id, req.user!.unixUser, updated) } };
     },
   );
 
@@ -226,18 +220,15 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     { preHandler: requireAuth },
     async (req, reply) => {
       const { id, cid } = req.params as { id: string; cid: string };
-      const project = ctx.projects.get(id);
-      if (!project || !canSeeProject(req.user!, project)) {
-        return reply.code(404).send({ error: 'project not found' });
-      }
-      const conv = ctx.conversations.get(cid);
-      if (!conv || conv.projectId !== id) {
+      const scope = resolveSessionScope(ctx, req.user!, id, cid);
+      if (!scope) {
         return reply.code(404).send({ error: 'conversation not found' });
       }
+      const conv = scope.conversation;
       if (conv.closedAt) return { conversation: { ...conv, alive: false } };
       await ctx.getTmux(req.user!.unixUser).killSession(conv.tmuxName);
-      ctx.chatRegistry.forceClose(cid);
-      const updated = ctx.conversations.update(cid, { closedAt: new Date().toISOString() });
+      ctx.chatRegistry.forceClose(scope.runtimeKey);
+      const updated = ctx.conversations.updateInProject(id, cid, { closedAt: new Date().toISOString() });
       return { conversation: { ...updated, alive: false } };
     },
   );
@@ -249,20 +240,17 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     { preHandler: requireAuth },
     async (req, reply) => {
       const { id, cid } = req.params as { id: string; cid: string };
-      const project = ctx.projects.get(id);
-      if (!project || !canSeeProject(req.user!, project)) {
-        return reply.code(404).send({ error: 'project not found' });
-      }
-      const conv = ctx.conversations.get(cid);
-      if (!conv || conv.projectId !== id) {
+      const scope = resolveSessionScope(ctx, req.user!, id, cid);
+      if (!scope) {
         return reply.code(404).send({ error: 'conversation not found' });
       }
+      const { project, conversation: conv } = scope;
       if (!ctx.agentAccess.canUse(req.user!, conv.agentKind)) {
         return reply.code(403).send({ error: 'agent_access_denied' });
       }
       if (!conv.closedAt) {
-        const active = markConversationActive(cid) ?? conv;
-        return { conversation: { ...active, alive: await aliveOf(req.user!.unixUser, active) } };
+        const active = markConversationActive(id, cid) ?? conv;
+        return { conversation: { ...active, alive: await aliveOf(id, req.user!.unixUser, active) } };
       }
       // 走 adapter:claude 输出与既有 buildClaudeCmd 一字不差;codex 拼 codex 子命令。
       const adapter = pickAdapter(conv.agentKind);
@@ -279,7 +267,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       } catch (e) {
         return reply.code(500).send({ error: `resume failed: ${(e as Error).message}` });
       }
-      const updated = markConversationActive(cid) ?? conv;
+      const updated = markConversationActive(id, cid) ?? conv;
       return { conversation: { ...updated, alive: true } };
     },
   );
@@ -291,8 +279,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     { preHandler: requireAuth },
     async (req, reply) => {
       const { id } = req.params as { id: string };
-      const project = ctx.projects.get(id);
-      if (!project || !canSeeProject(req.user!, project)) {
+      const project = resolveVisibleProject(ctx, req.user!, id);
+      if (!project) {
         return reply.code(404).send({ error: 'project not found' });
       }
       const parse = BatchSchema.safeParse(req.body ?? {});
@@ -301,11 +289,12 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       const succeeded: string[] = [];
       const failed: { id: string; reason: string }[] = [];
       for (const cid of ids) {
-        const conv = ctx.conversations.get(cid);
-        if (!conv || conv.projectId !== id) {
+        const conv = ctx.conversations.getInProject(id, cid);
+        if (!conv) {
           failed.push({ id: cid, reason: 'not_found' });
           continue;
         }
+        const runtimeKey = conversationRuntimeKey(id, cid);
         try {
           if (action === 'move') {
             const folderId = payload?.folderId ?? null;
@@ -316,16 +305,16 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
                 continue;
               }
             }
-            ctx.conversations.update(cid, { folderId });
+            ctx.conversations.updateInProject(id, cid, { folderId });
           } else if (action === 'star') {
-            ctx.conversations.update(cid, { starred: true });
+            ctx.conversations.updateInProject(id, cid, { starred: true });
           } else if (action === 'unstar') {
-            ctx.conversations.update(cid, { starred: false });
+            ctx.conversations.updateInProject(id, cid, { starred: false });
           } else if (action === 'close') {
             if (!conv.closedAt) {
               await ctx.getTmux(req.user!.unixUser).killSession(conv.tmuxName);
-              ctx.chatRegistry.forceClose(cid);
-              ctx.conversations.update(cid, { closedAt: new Date().toISOString() });
+              ctx.chatRegistry.forceClose(runtimeKey);
+              ctx.conversations.updateInProject(id, cid, { closedAt: new Date().toISOString() });
             }
           } else if (action === 'softDelete') {
             if (conv.starred) {
@@ -333,8 +322,8 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
               continue;
             }
             await ctx.getTmux(req.user!.unixUser).killSession(conv.tmuxName);
-            ctx.chatRegistry.forceClose(cid);
-            ctx.conversations.softDelete(cid);
+            ctx.chatRegistry.forceClose(runtimeKey);
+            ctx.conversations.softDeleteInProject(id, cid);
           }
           succeeded.push(cid);
         } catch (e) {
@@ -352,14 +341,11 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     { preHandler: requireAuth },
     async (req, reply): Promise<ScrollbackChunk> => {
       const { id, cid } = req.params as { id: string; cid: string };
-      const project = ctx.projects.get(id);
-      if (!project || !canSeeProject(req.user!, project)) {
-        return reply.code(404).send({ error: 'project not found' }) as unknown as ScrollbackChunk;
-      }
-      const conv = ctx.conversations.get(cid);
-      if (!conv || conv.projectId !== id || conv.deletedAt) {
+      const scope = resolveSessionScope(ctx, req.user!, id, cid);
+      if (!scope) {
         return reply.code(404).send({ error: 'conversation not found' }) as unknown as ScrollbackChunk;
       }
+      const conv = scope.conversation;
       const q = req.query as { before?: string; limit?: string };
       const before = q.before && /^\d+$/.test(q.before) ? parseInt(q.before, 10) : null;
       const limit = Math.min(Math.max(parseInt(q.limit ?? '800', 10) || 800, 1), 5000);
@@ -394,14 +380,11 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
     { preHandler: requireAuth },
     async (req, reply) => {
       const { id, cid } = req.params as { id: string; cid: string };
-      const project = ctx.projects.get(id);
-      if (!project || !canSeeProject(req.user!, project)) {
-        return reply.code(404).send({ error: 'project not found' });
-      }
-      const conv = ctx.conversations.get(cid);
-      if (!conv || conv.projectId !== id || conv.deletedAt) {
+      const scope = resolveSessionScope(ctx, req.user!, id, cid);
+      if (!scope) {
         return reply.code(404).send({ error: 'conversation not found' });
       }
+      const { project, conversation: conv } = scope;
       if (!ctx.agentAccess.canUse(req.user!, conv.agentKind)) {
         return reply.code(403).send({ error: 'agent_access_denied' });
       }
@@ -440,7 +423,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       // 状态机(transcript tail 偏移、polling 计时、askSidecar 缓存)。
       // 没这个 forceClose:旧 entry 持有的 perUserTmux 是创建当时的 unixUser、tail.offset 也是旧 transcript
       // 的尾偏移,reflow 写完新内容前端要么看不到、要么把残屏当当前态(用户看到的"循环关闭重开"症状之一)。
-      ctx.chatRegistry.forceClose(cid);
+      ctx.chatRegistry.forceClose(scope.runtimeKey);
       await new Promise((r) => setTimeout(r, 100));
 
       // 重新拉 tmux + bash + agent,走 adapter(claude 与 ChatSession.ensure 共享同一拼装,
@@ -472,7 +455,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
       await new Promise((r) => setTimeout(r, 1200));
       if (!(await targetTmux.hasSession(conv.tmuxName))) {
         const newSid = crypto.randomUUID();
-        ctx.conversations.update(cid, { sessionId: newSid });
+        ctx.conversations.updateInProject(id, cid, { sessionId: newSid });
         // 新 sid 必然无 transcript → 走 buildLaunchCmd(首次启动路径)。
         const cmd2 = adapter.buildLaunchCmd({
           launchCommand,
@@ -502,13 +485,13 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
         return;
       }
       const { id, cid } = req.params as { id: string; cid: string };
-      const project = ctx.projects.get(id);
-      const conv = ctx.conversations.get(cid);
-      if (!project || !conv || !canSeeProject(user, project) || conv.deletedAt) {
+      const scope = resolveSessionScope(ctx, user, id, cid);
+      if (!scope) {
         // 软删除的会话当作 not found:先去垃圾箱恢复才能再连终端。
         socket.close(1011, 'not found');
         return;
       }
+      const { project, conversation: conv } = scope;
       if (!ctx.agentAccess.canUse(user, conv.agentKind)) {
         socket.close(1008, 'agent_access_denied');
         return;
@@ -529,7 +512,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
         ? adapter.buildResumeCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort })
         : adapter.buildLaunchCmd({ launchCommand, sessionId: conv.sessionId, effort: conv.effort });
       const handle = ctx.registry.subscribe(
-        cid,
+        scope.runtimeKey,
         // 多用户隔离 2026-06-24:必须把登录身份的 unixUser 透给 BridgeSpec,
         // 否则 ptyBridge 落到 ServiceUser(wangleyan)socket,zhangrengang 的项目里
         // claude Bash 工具看到的就是 wangleyan(实证 bug)。
@@ -543,7 +526,7 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: AppContex
         },
       );
 
-      ctx.conversations.markActive(cid, new Date().toISOString());
+      ctx.conversations.markActiveInProject(id, cid, new Date().toISOString());
 
       safeSend(socket, encodeServerMessage({ type: 'status', alive: true }));
 

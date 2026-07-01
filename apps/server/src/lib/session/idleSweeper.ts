@@ -7,7 +7,7 @@ import type { TickResult } from './activity';
 export interface SweeperDeps {
   conversations: {
     listAllAlive: () => Array<{ id: string; projectId: string; tmuxName: string; sessionId: string; ownerId?: string }>;
-    update: (id: string, patch: { closedAt?: string }) => unknown;
+    update: (projectId: string, id: string, patch: { closedAt?: string }) => unknown;
   };
   users: {
     getSettings: (ownerId: string) => { idleCloseHours: number };
@@ -17,11 +17,11 @@ export interface SweeperDeps {
     killSession: (name: string, ownerId?: string) => Promise<void>;
   };
   registry: {
-    isActive: (id: string) => boolean;
-    forceClose: (id: string) => void;
+    isActive: (projectId: string, id: string) => boolean;
+    forceClose: (projectId: string, id: string) => void;
   };
   measureIdle: (
-    conv: { id: string; tmuxName: string; sessionId: string; ownerId?: string },
+    conv: { id: string; projectId: string; tmuxName: string; sessionId: string; ownerId?: string },
   ) => TickResult;
   now: () => number;
 }
@@ -79,8 +79,8 @@ export class IdleSweeper {
       if (r.idleForMs < thresholdHours * 3600_000) continue;
 
       await this.deps.tmux.killSession(c.tmuxName, c.ownerId);
-      this.deps.conversations.update(c.id, { closedAt: new Date(now).toISOString() });
-      this.deps.registry.forceClose(c.id);
+      this.deps.conversations.update(c.projectId, c.id, { closedAt: new Date(now).toISOString() });
+      this.deps.registry.forceClose(c.projectId, c.id);
     }
   }
 }

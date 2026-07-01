@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { loadConfig } from '../config';
 import { buildApp } from '../app';
 import { buildContext, type AppContext } from '../context';
+import { conversationRuntimeKey } from '../lib/conversationIdentity';
 
 // close / resume / batch 路由的端到端用例。
 // tmux 在测试环境无 server,killSession 静默吞错;newDetached 也会失败但 resume 测试用一个 stub 跳过实际拉起。
@@ -345,8 +346,9 @@ describe('POST .../conversations/:cid/reflow', () => {
     const registry = ctx.chatRegistry as unknown as {
       entries: Map<string, { session: typeof fakeSession; subscribers: Set<unknown> }>;
     };
-    registry.entries.set(convId, { session: fakeSession, subscribers: new Set([{}]) });
-    expect(ctx.chatRegistry.isActive(convId)).toBe(true);
+    const runtimeKey = conversationRuntimeKey(projectId, convId);
+    registry.entries.set(runtimeKey, { session: fakeSession, subscribers: new Set([{}]) });
+    expect(ctx.chatRegistry.isActive(runtimeKey)).toBe(true);
 
     // 调 reflow;newDetached 会失败(没 tmux server),返 500——但 forceClose 在 newDetached 之前调。
     await app.inject({
@@ -355,7 +357,7 @@ describe('POST .../conversations/:cid/reflow', () => {
       cookies: { rcc_token: cookie },
     });
 
-    expect(ctx.chatRegistry.isActive(convId)).toBe(false);
+    expect(ctx.chatRegistry.isActive(runtimeKey)).toBe(false);
   });
 
   it('未登录:401', async () => {

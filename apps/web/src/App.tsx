@@ -128,11 +128,17 @@ function ProjectRoute({
       onBack={() => navigate({ name: 'projects' })}
       onChangeTab={(next) => navigate({ name: 'project', projectId, tab: next }, { replace: true })}
       onOpenConversation={(c) =>
-        navigate({ name: 'conversation', projectId, convId: c.id, view: rememberedView(c.id) })
+        navigate({ name: 'conversation', projectId, convId: c.id, view: rememberedView(projectId, c.id) })
       }
     />
   );
 }
+
+type LoadedConversationRoute = {
+  key: string;
+  project: Project;
+  conversation: Conversation;
+};
 
 /**
  * 按 id 解析项目 + 会话后渲染 ConversationView。
@@ -147,11 +153,12 @@ function ConversationRoute({
   navigate: Nav;
 }) {
   const { projectId, convId, view } = route;
-  const [project, setProject] = useState<Project | null>(null);
-  const [conversation, setConversation] = useState<Conversation | null>(null);
+  const routeKey = `${projectId}:${convId}`;
+  const [loaded, setLoaded] = useState<LoadedConversationRoute | null>(null);
 
   useEffect(() => {
     let alive = true;
+    setLoaded(null);
     Promise.all([api.getProject(projectId), api.listConversations(projectId)])
       .then(([pr, cr]) => {
         if (!alive) return;
@@ -161,8 +168,7 @@ function ConversationRoute({
           navigate({ name: 'project', projectId, tab: 'sessions' }, { replace: true });
           return;
         }
-        setProject(pr.project);
-        setConversation(conv);
+        setLoaded({ key: routeKey, project: pr.project, conversation: conv });
       })
       .catch(() => {
         if (alive) navigate({ name: 'projects' }, { replace: true });
@@ -176,25 +182,27 @@ function ConversationRoute({
   useEffect(() => {
     if (view === null) {
       navigate(
-        { name: 'conversation', projectId, convId, view: rememberedView(convId) },
+        { name: 'conversation', projectId, convId, view: rememberedView(projectId, convId) },
         { replace: true },
       );
     }
   }, [view, projectId, convId, navigate]);
 
-  useTitle(conversation ? conversation.name : 'remote-cc');
+  const current = loaded?.key === routeKey ? loaded : null;
+  useTitle(current ? current.conversation.name : 'remote-cc');
 
-  if (view === null || !project || !conversation) return <div className="app" />;
+  if (view === null || !current) return <div className="app" />;
 
   return (
     <ConversationView
-      project={project}
-      conversation={conversation}
+      key={current.key}
+      project={current.project}
+      conversation={current.conversation}
       view={view}
       onBack={() => navigate({ name: 'project', projectId, tab: 'sessions' })}
       onSwitchView={() => {
         const next = view === 'chat' ? 'terminal' : 'chat';
-        rememberView(convId, next);
+        rememberView(projectId, convId, next);
         // 视图切换用 replace：避免后退在两视图间反复横跳。
         navigate({ name: 'conversation', projectId, convId, view: next }, { replace: true });
       }}

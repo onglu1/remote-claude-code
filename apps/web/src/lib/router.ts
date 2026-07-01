@@ -2,21 +2,24 @@ import { useCallback, useEffect, useState } from 'react';
 import { parseRoute, buildRoute, type Route, type SessionView } from '@rcc/shared';
 
 /** 每个会话「上次所用视图」的 localStorage key（聊天/终端记忆）。 */
-const viewKey = (convId: string) => `rcc:view:${convId}`;
+const viewKey = (projectId: string, convId: string) => `rcc:view:${projectId}:${convId}`;
+const legacyViewKey = (convId: string) => `rcc:view:${convId}`;
 
 /** 读会话记忆视图；缺省/异常一律默认 chat（与原 ProjectDetail 行为一致）。 */
-export function rememberedView(convId: string): SessionView {
+export function rememberedView(projectId: string, convId: string): SessionView {
   try {
-    return localStorage.getItem(viewKey(convId)) === 'terminal' ? 'terminal' : 'chat';
+    const scoped = localStorage.getItem(viewKey(projectId, convId));
+    if (scoped) return scoped === 'terminal' ? 'terminal' : 'chat';
+    return localStorage.getItem(legacyViewKey(convId)) === 'terminal' ? 'terminal' : 'chat';
   } catch {
     return 'chat';
   }
 }
 
 /** 记住会话视图，供下次打开/规范化无后缀 URL 时恢复。 */
-export function rememberView(convId: string, view: SessionView): void {
+export function rememberView(projectId: string, convId: string, view: SessionView): void {
   try {
-    localStorage.setItem(viewKey(convId), view);
+    localStorage.setItem(viewKey(projectId, convId), view);
   } catch {
     /* localStorage 不可用时忽略，不影响导航 */
   }

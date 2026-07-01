@@ -5,6 +5,15 @@ import { type Conversation, type AgentKind } from '@rcc/shared';
 import { Tmux } from './session/tmux';
 
 type StoredConversation = Omit<Conversation, 'alive'>;
+const CONVERSATION_ID_BYTES = 12;
+
+function newConversationId(existing: StoredConversation[]): string {
+  let id = '';
+  do {
+    id = crypto.randomBytes(CONVERSATION_ID_BYTES).toString('hex');
+  } while (existing.some((c) => c.id === id));
+  return id;
+}
 
 /**
  * 会话元数据存储（id/name/tmuxName/sessionId/createdAt/deletedAt）。
@@ -76,9 +85,19 @@ export class ConversationStore {
     return this.loadAll().filter((c) => !c.deletedAt && !c.closedAt);
   }
 
+  /** 所有会话(含软删除)。仅用于需要全局排重/排除已知 sessionId 的内部流程。 */
+  listAll(): StoredConversation[] {
+    return this.loadAll();
+  }
+
   /** 按 id 取(无论是否软删除;调用方按需要看 deletedAt 字段)。 */
   get(convId: string): StoredConversation | undefined {
     return this.loadAll().find((c) => c.id === convId);
+  }
+
+  /** 按项目 + id 取;会话路由必须走这个入口,避免跨项目同 id 串台。 */
+  getInProject(projectId: string, convId: string): StoredConversation | undefined {
+    return this.loadAll().find((c) => c.projectId === projectId && c.id === convId);
   }
 
   /**
@@ -97,7 +116,7 @@ export class ConversationStore {
     opts?: { agentKind?: AgentKind; launchCommand?: string; codexSessionDiscovered?: boolean },
   ): StoredConversation {
     const all = this.loadAll();
-    const id = crypto.randomBytes(4).toString('hex');
+    const id = newConversationId(all);
     const conv: StoredConversation = {
       id,
       projectId,
@@ -135,9 +154,27 @@ export class ConversationStore {
     return all[i];
   }
 
+  /** 项目内局部更新;路由层使用,避免重复 id 时改到别的项目。 */
+  updateInProject(
+    projectId: string,
+    convId: string,
+    patch: Partial<StoredConversation>,
+  ): StoredConversation | undefined {
+    const all = this.loadAll();
+    const i = all.findIndex((c) => c.projectId === projectId && c.id === convId);
+    if (i === -1) return undefined;
+    all[i] = { ...all[i], ...patch, id: all[i].id, projectId: all[i].projectId };
+    this.write(all);
+    return all[i];
+  }
+
   /** 仅更新 lastActivityAt;比 update 路径轻,活动探测器高频调用专用。 */
   markActivity(convId: string, ts: string): StoredConversation | undefined {
     return this.update(convId, { lastActivityAt: ts });
+  }
+
+  markActivityInProject(projectId: string, convId: string, ts: string): StoredConversation | undefined {
+    return this.updateInProject(projectId, convId, { lastActivityAt: ts });
   }
 
   /** 会话被用户重新进入/显式恢复:清休眠标记并刷新活动时间。 */
@@ -145,9 +182,17 @@ export class ConversationStore {
     return this.update(convId, { closedAt: undefined, lastActivityAt: ts });
   }
 
+  markActiveInProject(projectId: string, convId: string, ts: string): StoredConversation | undefined {
+    return this.updateInProject(projectId, convId, { closedAt: undefined, lastActivityAt: ts });
+  }
+
   /** 软删除:打 deletedAt 戳,不真的删 metadata,可恢复。 */
   softDelete(convId: string): StoredConversation | undefined {
     return this.update(convId, { deletedAt: new Date().toISOString() });
+  }
+
+  softDeleteInProject(projectId: string, convId: string): StoredConversation | undefined {
+    return this.updateInProject(projectId, convId, { deletedAt: new Date().toISOString() });
   }
 
   /** 恢复:清掉 deletedAt 戳。tmux 不主动重启,进入会话时 ensure 自然拉。 */
@@ -162,9 +207,24 @@ export class ConversationStore {
     return next;
   }
 
+  restoreInProject(projectId: string, convId: string): StoredConversation | undefined {
+    const all = this.loadAll();
+    const i = all.findIndex((c) => c.projectId === projectId && c.id === convId);
+    if (i === -1) return undefined;
+    const next = { ...all[i] };
+    delete next.deletedAt;
+    all[i] = next;
+    this.write(all);
+    return next;
+  }
+
   /** 彻底删除(垃圾箱清空动作);不可恢复。 */
   hardDelete(convId: string): void {
     this.write(this.loadAll().filter((c) => c.id !== convId));
+  }
+
+  hardDeleteInProject(projectId: string, convId: string): void {
+    this.write(this.loadAll().filter((c) => !(c.projectId === projectId && c.id === convId)));
   }
 
   /** 兼容旧调用方:同 hardDelete。 */

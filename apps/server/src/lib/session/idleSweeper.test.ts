@@ -8,7 +8,7 @@ function makeDeps(): SweeperDeps & { _calls: { killed: string[]; closedConvs: st
       { id: 'c1', projectId: 'p', tmuxName: 't1', sessionId: 's1', ownerId: 'u1' },
       { id: 'c2', projectId: 'p', tmuxName: 't2', sessionId: 's2', ownerId: 'u2' },
     ],
-    update: vi.fn((id: string, _patch: { closedAt?: string }) => {
+    update: vi.fn((_projectId: string, id: string, _patch: { closedAt?: string }) => {
       _calls.closedConvs.push(id);
       return undefined;
     }),
